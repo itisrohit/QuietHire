@@ -368,40 +368,78 @@ flowchart TD
 
 ---
 
-## Technology Stack
-
 ### Languages & Frameworks
 
 ```mermaid
-mindmap
-    root((QuietHire Tech Stack))
-        Backend
-            Go
-                Fiber Framework
-                Playwright-go
-                Standard Library
-            Python
-                FastAPI
-                Undetected Playwright
-                Unstructured
-        Frontend
-            Next.js
-            HTMX Alternative
-            Vanilla CSS
-        Databases
-            Typesense
-            ClickHouse
-            PostgreSQL
-            Dragonfly Redis
-        AI/ML
-            Groq API
-            Llama 3.3 70B
-            Custom Scoring Models
-        Infrastructure
-            Docker
-            Docker Compose
-            Temporal
-            Grafana Stack
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1e88e5','primaryTextColor':'#fff','primaryBorderColor':'#0d47a1','lineColor':'#42a5f5','secondaryColor':'#43a047','tertiaryColor':'#fb8c00','background':'#ffffff','mainBkg':'#1e88e5','secondaryBkg':'#43a047','tertiaryBkg':'#fb8c00'}}}%%
+graph TB
+    ROOT[QuietHire Tech Stack]
+    
+    subgraph Backend
+        GO[Go]
+        GO_FIBER[Fiber Framework]
+        GO_PLAY[Playwright-go]
+        GO_STD[Standard Library]
+        
+        PY[Python]
+        PY_FAST[FastAPI]
+        PY_PLAY[Undetected Playwright]
+        PY_UNST[Unstructured]
+    end
+    
+    subgraph Frontend
+        NEXT[Next.js]
+        HTMX[HTMX Alternative]
+        CSS[Vanilla CSS]
+    end
+    
+    subgraph Databases
+        TS[Typesense]
+        CH[ClickHouse]
+        PG[PostgreSQL]
+        DF[Dragonfly Redis]
+    end
+    
+    subgraph AI_ML[AI/ML]
+        GROQ[Groq API]
+        LLAMA[Llama 3.3 70B]
+        CUSTOM[Custom Scoring Models]
+    end
+    
+    subgraph Infrastructure
+        DOCKER[Docker]
+        COMPOSE[Docker Compose]
+        TEMPORAL[Temporal]
+        GRAFANA[Grafana Stack]
+    end
+    
+    ROOT --> Backend
+    ROOT --> Frontend
+    ROOT --> Databases
+    ROOT --> AI_ML
+    ROOT --> Infrastructure
+    
+    GO --> GO_FIBER
+    GO --> GO_PLAY
+    GO --> GO_STD
+    
+    PY --> PY_FAST
+    PY --> PY_PLAY
+    PY --> PY_UNST
+    
+    style ROOT fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#fff
+    style GO fill:#00ADD8,stroke:#00758f,color:#fff
+    style PY fill:#3776AB,stroke:#1e5a8e,color:#fff
+    style NEXT fill:#000000,stroke:#333,color:#fff
+    style HTMX fill:#3d72d7,stroke:#2557b8,color:#fff
+    style TS fill:#e34234,stroke:#c02d1f,color:#fff
+    style CH fill:#FFCC01,stroke:#d9ad00,color:#000
+    style PG fill:#336791,stroke:#1e4a6b,color:#fff
+    style DF fill:#DC382D,stroke:#b52d23,color:#fff
+    style GROQ fill:#f55036,stroke:#d13d27,color:#fff
+    style LLAMA fill:#0467DF,stroke:#0352b5,color:#fff
+    style DOCKER fill:#2496ED,stroke:#1a7cc4,color:#fff
+    style TEMPORAL fill:#000000,stroke:#333,color:#fff
 ```
 
 ### Service Technology Mapping
@@ -552,9 +590,9 @@ graph TB
     A --> B
     B --> C
     
-    style A fill:#ff6b6b
-    style B fill:#ffd93d
-    style C fill:#6bcf7f
+    style A fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style B fill:#ffd93d,stroke:#d9ad00,color:#000
+    style C fill:#6bcf7f,stroke:#37b24d,color:#000
 ```
 
 ### Horizontal Scaling Points
