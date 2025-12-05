@@ -1,0 +1,108 @@
+networks:
+  quiethire-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  typesense_data:
+  temporal_data:
+
+services:
+  # PostgreSQL - Main relational DB
+  postgres:
+    image: postgres:16-alpine
+    container_name: quiethire-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quiethire-network
+
+  # ClickHouse - Job storage
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: quiethire-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quiethire-network
+
+  # Typesense - Search engine
+  typesense:
+    image: typesense/typesense:26.0
+    container_name: quiethire-typesense
+    ports:
+      - "8108:8108"
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
+    volumes:
+      - typesense_data:/data
+    networks:
+      - quiethire-network
+
+  # Dragonfly - Redis-compatible cache
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: quiethire-dragonfly
+    ports:
+      - "6379:6379"
+    ulimits:
+      memlock: -1
+    networks:
+      - quiethire-network
+
+  # Temporal Server
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: quiethire-temporal
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PWD=${DB_PASSWORD}
+      - POSTGRES_SEEDS=postgres
+    ports:
+      - "7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - temporal_data:/etc/temporal
+    networks:
+      - quiethire-network
+
+  # Temporal UI
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: quiethire-temporal-ui
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "8080:8080"
+    depends_on:
+      - temporal
+    networks:
+      - quiethire-network
