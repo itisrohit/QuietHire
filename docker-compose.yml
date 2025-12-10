@@ -7,6 +7,8 @@ volumes:
   clickhouse_data:
   typesense_data:
   temporal_data:
+  grafana_data:
+  prometheus_data:
 
 services:
   # PostgreSQL - Main relational DB
@@ -79,7 +81,7 @@ services:
     image: temporalio/auto-setup:1.24.2
     container_name: quiethire-temporal
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PWD=${DB_PASSWORD}
@@ -106,3 +108,184 @@ services:
       - temporal
     networks:
       - quiethire-network
+
+  # Temporal Worker
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.worker
+    container_name: quiethire-worker
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-clickhouse}
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    depends_on:
+      - temporal
+      - postgres
+      - clickhouse
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # Grafana - Observability Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: quiethire-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - quiethire-network
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: quiethire-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - quiethire-network
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: quiethire-prometheus
+    ports:
+      - "9091:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    volumes:
+      - prometheus_data:/prometheus
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - quiethire-network
+
+  # Main API Service
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: quiethire-api
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      - APP_NAME=${APP_NAME:-QuietHire API}
+      - ENV=${ENV:-development}
+      - API_PORT=3000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - TYPESENSE_HOST=${TYPESENSE_HOST:-typesense}
+      - TYPESENSE_PORT=${TYPESENSE_PORT:-8108}
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - REDIS_HOST=${REDIS_HOST:-dragonfly}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      typesense:
+        condition: service_started
+      dragonfly:
+        condition: service_started
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # Parser Service
+  parser:
+    build:
+      context: ./apps/parser
+      dockerfile: Dockerfile
+    container_name: quiethire-parser
+    ports:
+      - "8001:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # RealScore Service
+  realscore:
+    build:
+      context: ./apps/realscore
+      dockerfile: Dockerfile
+    container_name: quiethire-realscore
+    ports:
+      - "8002:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - MIN_REALSCORE_THRESHOLD=${MIN_REALSCORE_THRESHOLD:-70}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # Manager Extractor Service
+  manager-extractor:
+    build:
+      context: ./apps/manager-extractor
+      dockerfile: Dockerfile
+    container_name: quiethire-manager-extractor
+    ports:
+      - "8003:8000"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # Email Writer Service
+  email-writer:
+    build:
+      context: ./apps/email-writer
+      dockerfile: Dockerfile
+    container_name: quiethire-email-writer
+    ports:
+      - "8004:8000"
+    environment:
+      - LLAMA_API_KEY=${LLAMA_API_KEY}
+      - LLAMA_MODEL=${LLAMA_MODEL:-llama-3.3-70b-versatile}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # Proxy Manager Service
+  proxy-manager:
+    build:
+      context: ./apps/proxy-manager
+      dockerfile: Dockerfile
+    container_name: quiethire-proxy-manager
+    ports:
+      - "8005:8000"
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-dragonfly}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - PROXY_POOL_SIZE=${PROXY_POOL_SIZE:-10}
+      - RESIDENTIAL_PROXY_URL=${RESIDENTIAL_PROXY_URL}
+      - DATACENTER_PROXY_URL=${DATACENTER_PROXY_URL}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      dragonfly:
+        condition: service_started
+    networks:
+      - quiethire-network
+    restart: unless-stopped

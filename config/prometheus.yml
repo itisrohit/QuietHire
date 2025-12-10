@@ -1,0 +1,65 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # API Service
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:3000']
+        labels:
+          service: 'api'
+
+  # Parser Service
+  - job_name: 'parser'
+    static_configs:
+      - targets: ['parser:8000']
+        labels:
+          service: 'parser'
+
+  # RealScore Service
+  - job_name: 'realscore'
+    static_configs:
+      - targets: ['realscore:8000']
+        labels:
+          service: 'realscore'
+
+  # Manager Extractor Service
+  - job_name: 'manager-extractor'
+    static_configs:
+      - targets: ['manager-extractor:8000']
+        labels:
+          service: 'manager-extractor'
+
+  # Email Writer Service
+  - job_name: 'email-writer'
+    static_configs:
+      - targets: ['email-writer:8000']
+        labels:
+          service: 'email-writer'
+
+  # Proxy Manager Service
+  - job_name: 'proxy-manager'
+    static_configs:
+      - targets: ['proxy-manager:8000']
+        labels:
+          service: 'proxy-manager'
+
+  # PostgreSQL Exporter (optional - add if needed)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres:5432']
+
+  # ClickHouse (has built-in metrics endpoint)
+  - job_name: 'clickhouse'
+    static_configs:
+      - targets: ['clickhouse:8123']
+        labels:
+          service: 'clickhouse'
+
+  # Typesense (has metrics endpoint)
+  - job_name: 'typesense'
+    static_configs:
+      - targets: ['typesense:8108']
+        labels:
+          service: 'typesense'

@@ -48,3 +48,9 @@ Thumbs.db
 *.db
 *.sqlite
 data/
+# Compiled binaries
+apps/*/api
+apps/*/worker
+apps/*/crawler-go
+apps/*/proxy-manager
+**/cmd/*/main
