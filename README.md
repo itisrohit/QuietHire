@@ -1,256 +1,622 @@
-# QuietHire - Setup & Development Guide
+# QuietHire - Job Aggregation Platform with AI-Powered Discovery
 
-## What's Been Completed
+QuietHire is a comprehensive job aggregation platform that uses AI and OSINT techniques to discover and crawl job postings from multiple sources. Built with microservices architecture, Temporal workflows, and distributed crawling capabilities.
 
-### Phase 1: Foundation (✅ Completed)
-- ✅ Go workspace initialized with proper module structure
-- ✅ All Go dependencies added (Fiber, PostgreSQL, Typesense, Redis client)
-- ✅ Comprehensive `.env.example` file created
-- ✅ Docker Compose updated with all services:
-  - PostgreSQL, ClickHouse, Typesense, Dragonfly (Redis-compatible cache)
-  - Temporal + Temporal UI
-  - Grafana, Loki, Prometheus (Observability stack)
-  - All application services (API, Parser, RealScore, Manager Extractor, Email Writer, Proxy Manager)
-- ✅ Prometheus configuration for metrics collection
+## Status: MVP Complete ✅
 
-### Phase 2.1: Go API Service (✅ Completed)
-- ✅ Go Fiber API server with middleware (CORS, logging, recovery)
-- ✅ Health check endpoint
-- ✅ Placeholder search, jobs, and stats endpoints
-- ✅ Configuration management system
-- ✅ Dockerfiles for all services
+### Completed Features
 
-### Phase 2.2: Typesense Schema (✅ In Progress)
-- ✅ Typesense schema initialization script
-- Schema includes: job details, hiring manager info, real_score, location, remote status, salary, etc.
+#### Core Infrastructure (✅)
+- ✅ Microservices architecture with 11 services
+- ✅ Multi-database setup: PostgreSQL, ClickHouse, Typesense
+- ✅ Temporal workflow orchestration
+- ✅ Docker Compose orchestration with health checks
+- ✅ All services containerized and production-ready
+
+#### API Service (✅)
+- ✅ Go Fiber REST API with comprehensive endpoints
+- ✅ Health monitoring and statistics
+- ✅ Job search via Typesense integration
+- ✅ Job listing with filters (limit, offset, location, remote)
+- ✅ Individual job retrieval
+- ✅ ClickHouse integration for analytics
+
+#### Crawling & Discovery (✅)
+- ✅ Python-based stealth crawler with Playwright
+- ✅ Batch URL crawling endpoint
+- ✅ HTML parsing with JSON-LD JobPosting support
+- ✅ OSINT discovery service for career pages
+- ✅ ATS detection (Lever, Greenhouse, Workday, etc.)
+- ✅ Google Dork-based company discovery
+- ✅ Subdomain enumeration
+- ✅ Proxy management service
+
+#### Temporal Workflows (✅)
+- ✅ 5 registered workflows:
+  - CrawlCoordinatorWorkflow
+  - ScheduledCrawlWorkflow
+  - CompanyDiscoveryWorkflow
+  - ContinuousDiscoveryWorkflow
+  - GoogleDorkDiscoveryWorkflow
+- ✅ 13 registered activities for crawling and discovery
+- ✅ Worker service connected to PostgreSQL and ClickHouse
+
+#### Database Schemas (✅)
+- ✅ PostgreSQL: 7 tables (companies, discovered_urls, subdomains, etc.)
+- ✅ ClickHouse: 6 tables (jobs, crawl_history, analytics tables)
+- ✅ Typesense: jobs collection with 18 searchable fields
+
+#### Code Quality (✅)
+- ✅ All critical linting errors resolved
+- ✅ Pre-commit hooks configured (yamllint, golangci-lint)
+- ✅ Comprehensive error handling
+- ✅ Proper resource cleanup (defer statements)
 
 ## Quick Start
 
-### Automated Setup (Recommended)
+### Prerequisites
+
+- Docker & Docker Compose
+- Go 1.21+ (for local development)
+- Python 3.12+ with uv (for local Python development)
+- Make (optional, for convenience commands)
+
+### 1. Clone and Setup
 
 ```bash
-# Run the setup script to initialize all dependencies
+# Clone the repository
+git clone <repository-url>
+cd QuietHire
+
+# Run automated setup
 ./setup.sh
 
 # This will:
-# - Create .env from .env.example if it doesn't exist
-# - Download and tidy all Go dependencies
-# - Sync all Python dependencies with uv
-# - Setup py-common package
+# - Create .env from .env.example
+# - Download Go dependencies
+# - Sync Python dependencies with uv
+# - Setup shared packages
 ```
 
-### Manual Setup
-
-#### 1. Environment Setup
+### 2. Configure Environment
 
 ```bash
-# Copy example env file
+# Edit .env and set required API keys
 cp .env.example .env
 
-# Edit .env and add your API keys:
-# - TYPESENSE_API_KEY
-# - GROQ_API_KEY (for parser)
-# - LLAMA_API_KEY (for email writer)
-# - DB_PASSWORD, CLICKHOUSE_PASSWORD
+# Required keys:
+# - TYPESENSE_API_KEY (generate a secure key)
+# - GROQ_API_KEY (for job parsing - get from https://groq.com)
+# - SERPAPI_KEY (optional, for Google Dork searches)
 ```
 
-#### 2. Install Dependencies
-
-**Go Services:**
-```bash
-# For each Go service (api, crawler-go, proxy-manager)
-cd apps/api
-go mod download
-go mod tidy
-```
-
-**Python Services:**
-```bash
-# For each Python service (parser, realscore, manager-extractor, email-writer, crawler-python)
-cd apps/parser
-uv sync
-```
-
-### 2. Start Infrastructure Services
+### 3. Start All Services
 
 ```bash
-# Start only database and infrastructure services
-docker compose up -d postgres clickhouse typesense dragonfly temporal
+# Start all services with Docker Compose
+docker-compose up -d
 
-# Wait for services to be healthy
-docker compose ps
-```
-
-### 3. Initialize Typesense Schema
-
-```bash
-cd apps/api
-go run cmd/init-typesense/main.go
-```
-
-### 4. Start Application Services
-
-```bash
-# Start all application services
-docker compose up -d
-
-# Or start specific services
-docker compose up -d api parser realscore
+# Check service health
+docker-compose ps
 
 # View logs
-docker compose logs -f api
+docker-compose logs -f api worker
 ```
 
-### 5. Test the API
+### 4. Initialize Databases
+
+```bash
+# Initialize ClickHouse schema
+docker exec quiethire-clickhouse clickhouse-client --database=quiethire < config/clickhouse/schema.sql
+
+# Initialize PostgreSQL schema
+docker exec quiethire-postgres psql -U quiethire -d quiethire < config/postgres/osint-schema.sql
+
+# Initialize Typesense (automatically initialized by API service)
+```
+
+### 5. Verify Installation
+
+```bash
+# Test API health
+curl http://localhost:3000/health
+
+# Check statistics
+curl http://localhost:3000/api/v1/stats
+
+# Test microservices
+curl http://localhost:8001/health  # Parser
+curl http://localhost:8002/health  # Crawler
+curl http://localhost:8004/health  # OSINT Discovery
+curl http://localhost:8003/health  # Proxy Manager
+```
+
+## API Endpoints
+
+### Core Endpoints
 
 ```bash
 # Health check
-curl http://localhost:3000/health
+GET /health
 
-# Search (placeholder)
-curl "http://localhost:3000/api/v1/search?q=software+engineer"
+# Job statistics
+GET /api/v1/stats
+# Returns: TotalJobs, ActiveJobs, Companies, AvgRealScore, LastCrawledAt
 
-# Stats
-curl http://localhost:3000/api/v1/stats
+# Search jobs (Typesense)
+GET /api/v1/search?q=engineer&limit=20
+# Query params: q (query), limit (default: 20)
+
+# List jobs with filters
+GET /api/v1/jobs?limit=10&offset=0&location=Remote&remote=true
+# Query params: limit, offset, location, remote (true/false)
+
+# Get single job
+GET /api/v1/jobs/:id
+# Returns complete job details
+```
+
+### Microservice Endpoints
+
+#### Parser Service (Port 8001)
+```bash
+# Health check
+GET /health
+
+# Parse job HTML
+POST /api/v1/parse
+Content-Type: application/json
+{
+  "html": "<html>...</html>",
+  "url": "https://example.com/job/123"
+}
+# Returns: title, description, company, location, salary, job_type, etc.
+```
+
+#### Crawler Service (Port 8002)
+```bash
+# Health check
+GET /health
+
+# Batch crawl URLs
+POST /crawl-batch
+Content-Type: application/json
+["https://example.com/jobs", "https://another.com/careers"]
+# Returns: array of {url, html, status, success, error}
+```
+
+#### OSINT Discovery Service (Port 8004)
+```bash
+# Health check
+GET /health
+
+# Detect ATS platform
+POST /api/v1/detect/ats
+Content-Type: application/json
+{"url": "https://jobs.lever.co/company"}
+# Returns: {is_ats, platform, confidence, job_listing_urls}
+
+# Discover career pages
+POST /api/v1/discover/career-pages
+Content-Type: application/json
+{"domain": "example.com"}
+# Returns: {career_pages, domain, total_found}
+
+# Enumerate subdomains
+POST /api/v1/enumerate/subdomains
+Content-Type: application/json
+{"domain": "example.com"}
+
+# Search with Google Dorks
+POST /api/v1/search/dork
+Content-Type: application/json
+{"query": "site:example.com 'careers'", "max_results": 10}
+```
+
+#### Proxy Manager (Port 8003)
+```bash
+# Health check
+GET /health
+
+# Get proxy
+GET /proxy
+# Returns: proxy URL for rotation
+```
+
+## Service Ports
+
+| Service | Port | URL | Description |
+|---------|------|-----|-------------|
+| **API** | 3000 | http://localhost:3000 | Main REST API |
+| **Parser** | 8001 | http://localhost:8001 | Job HTML parser |
+| **Crawler** | 8002 | http://localhost:8002 | Web crawler |
+| **Proxy Manager** | 8003 | http://localhost:8003 | Proxy rotation |
+| **OSINT Discovery** | 8004 | http://localhost:8004 | Company discovery |
+| **Temporal** | 7233 | localhost:7233 | Workflow orchestration |
+| **Temporal UI** | 8080 | http://localhost:8080 | Temporal dashboard |
+| **PostgreSQL** | 5432 | localhost:5432 | Primary database |
+| **ClickHouse HTTP** | 8123 | http://localhost:8123 | Analytics queries |
+| **ClickHouse Native** | 9000 | localhost:9000 | Native protocol |
+| **Typesense** | 8108 | http://localhost:8108 | Search engine |
+| **Dragonfly (Redis)** | 6379 | localhost:6379 | Cache/queue |
+
+## Architecture
+
+QuietHire uses a microservices architecture with distributed crawling and workflow orchestration:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        API Gateway                           │
+│                   (Go Fiber - Port 3000)                     │
+│  Endpoints: /search, /jobs, /stats, /health                 │
+└─────────────────────────────────────────────────────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+┌─────────▼────────┐ ┌─────▼──────┐ ┌───────▼────────┐
+│   Typesense      │ │ ClickHouse │ │  PostgreSQL    │
+│  (Search Index)  │ │(Analytics) │ │ (Primary DB)   │
+└──────────────────┘ └────────────┘ └────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│            Temporal Workflows (Orchestration)                │
+│  ├── CrawlCoordinatorWorkflow                               │
+│  ├── CompanyDiscoveryWorkflow                               │
+│  └── GoogleDorkDiscoveryWorkflow                            │
+└─────────────────────────────────────────────────────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+┌─────────▼────────┐ ┌─────▼──────┐ ┌───────▼────────┐
+│     Crawler      │ │   Parser   │ │ OSINT Discovery│
+│  (Playwright)    │ │  (Groq AI) │ │ (ATS Detection)│
+│   Port 8002      │ │ Port 8001  │ │   Port 8004    │
+└──────────────────┘ └────────────┘ └────────────────┘
+```
+
+### Directory Structure
+
+```
+quiethire/
+├── apps/
+│   ├── api/                    # Go Fiber REST API
+│   │   ├── cmd/
+│   │   │   ├── api/           # Main API server
+│   │   │   ├── worker/        # Temporal worker
+│   │   │   ├── init-clickhouse/
+│   │   │   └── init-typesense/
+│   │   └── internal/
+│   │       ├── activities/    # Temporal activities
+│   │       ├── workflows/     # Temporal workflows
+│   │       └── config/        # Configuration
+│   ├── crawler-python/        # Python web crawler
+│   ├── parser/                # Job HTML parser
+│   ├── osint-discovery/       # Company discovery service
+│   └── proxy-manager/         # Proxy rotation
+├── pkg/
+│   ├── go-common/             # Shared Go packages
+│   └── py-common/             # Shared Python packages
+├── config/
+│   ├── clickhouse/schema.sql  # ClickHouse tables
+│   └── postgres/osint-schema.sql # PostgreSQL tables
+└── docker-compose.yml         # Orchestration
 ```
 
 ## Development
 
 ### Running Services Locally
 
-#### Go API
+#### Go Services
 ```bash
 cd apps/api
-go run cmd/api/main.go
+go run cmd/api/main.go          # API server
+go run cmd/worker/main.go       # Temporal worker
 ```
 
-#### Python Services (using uv)
+#### Python Services
 ```bash
-cd apps/parser  # or realscore, manager-extractor, email-writer, crawler-python
+cd apps/parser  # or other Python service
 
-# Sync dependencies first (creates/updates .venv)
+# Install dependencies
 uv sync
 
-# Run the service
-uv run python main.py
-# or for FastAPI services:
+# Run service
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Adding Python Dependencies
+### Database Access
 
+#### ClickHouse
 ```bash
-cd apps/parser  # or any Python service
+# CLI access
+docker exec -it quiethire-clickhouse clickhouse-client --database=quiethire
 
-# Add a new dependency
+# Example queries
+SELECT COUNT(*) FROM jobs;
+SELECT company, COUNT(*) as job_count FROM jobs GROUP BY company;
+SELECT AVG(real_score) FROM jobs WHERE is_active = 1;
+```
+
+#### PostgreSQL
+```bash
+# CLI access
+docker exec -it quiethire-postgres psql -U quiethire -d quiethire
+
+# Example queries
+SELECT COUNT(*) FROM companies;
+SELECT * FROM discovered_urls LIMIT 10;
+SELECT * FROM crawl_queue WHERE status = 'pending';
+```
+
+#### Typesense
+```bash
+# Search jobs
+curl "http://localhost:8108/collections/jobs/documents/search?q=engineer&query_by=title,description" \
+  -H "X-TYPESENSE-API-KEY: your-api-key"
+```
+
+### Adding Dependencies
+
+#### Go
+```bash
+cd apps/api
+go get github.com/package/name
+go mod tidy
+```
+
+#### Python
+```bash
+cd apps/parser
 uv add package-name
-
-# Add a dev dependency
-uv add --dev pytest
-
-# Sync all dependencies
 uv sync
-
-# Update lock file
-uv lock
 ```
 
 ### Scaling Services
 
 ```bash
-# Scale crawlers for more throughput
-docker compose up -d --scale crawler-python=8 --scale crawler-go=6
+# Scale crawlers for higher throughput
+docker-compose up -d --scale crawler-python=5
+
+# Monitor logs
+docker-compose logs -f crawler-python
 ```
 
-## Service Ports
+### Code Quality
 
-| Service | Port | URL |
-|---------|------|-----|
-| API | 3000 | http://localhost:3000 |
-| Temporal UI | 8080 | http://localhost:8080 |
-| Grafana | 3001 | http://localhost:3001 |
-| Prometheus | 9090 | http://localhost:9090 |
-| Typesense | 8108 | http://localhost:8108 |
-| PostgreSQL | 5432 | localhost:5432 |
-| ClickHouse HTTP | 8123 | http://localhost:8123 |
-| ClickHouse Native | 9000 | localhost:9000 |
-| Dragonfly (Redis) | 6379 | localhost:6379 |
-| Parser | 8001 | http://localhost:8001 |
-| RealScore | 8002 | http://localhost:8002 |
-| Manager Extractor | 8003 | http://localhost:8003 |
-| Email Writer | 8004 | http://localhost:8004 |
-| Proxy Manager | 8005 | http://localhost:8005 |
+```bash
+# Run linters
+make lint
 
-## Architecture
+# Format code
+make fmt
 
-```
-quiethire/
-├── apps/
-│   ├── api/              → Go Fiber API (search, jobs)
-│   ├── crawler-go/       → Fast Go crawler (playwright-go)
-│   ├── crawler-python/   → Stealth Python crawler
-│   ├── parser/           → HTML → structured data (FastAPI + Groq)
-│   ├── realscore/        → Authenticity scoring (0-100)
-│   ├── manager-extractor/→ Extract hiring manager info
-│   ├── email-writer/     → AI email generation (Llama-3.3)
-│   └── proxy-manager/    → Proxy rotation service
-├── pkg/
-│   ├── go-common/        → Shared Go packages
-│   └── py-common/        → Shared Python packages
-├── config/
-│   └── prometheus.yml    → Metrics configuration
-└── docker-compose.yml    → Full stack orchestration
+# Run pre-commit hooks
+pre-commit run --all-files
 ```
 
-## Next Steps
+## Temporal Workflows
 
-### Immediate (Phase 2)
-- [ ] Implement Typesense search in API
-- [ ] Set up ClickHouse tables and schemas
-- [ ] Create basic frontend (Next.js or HTMX)
+QuietHire uses Temporal for reliable, scalable workflow orchestration. The worker service processes workflows and activities.
 
-### Short Term (Phase 3-4)
-- [ ] Implement Temporal workflows for crawling
-- [ ] Build Go crawler for public job boards
-- [ ] Build Python stealth crawler for ATS platforms
-- [ ] Implement proxy rotation logic
+### Available Workflows
 
-### Medium Term (Phase 5-8)
-- [ ] Complete Parser service (Groq + Unstructured)
-- [ ] Build RealScore authenticity engine
-- [ ] Implement hiring manager extraction
-- [ ] Build email generation service
+1. **CompanyDiscoveryWorkflow** - Discover companies and their career pages
+2. **GoogleDorkDiscoveryWorkflow** - Use Google Dorks to find job postings
+3. **CrawlCoordinatorWorkflow** - Coordinate distributed crawling
+4. **ScheduledCrawlWorkflow** - Scheduled recurring crawls
+5. **ContinuousDiscoveryWorkflow** - Continuous company discovery
+
+### Registered Activities
+
+#### Crawling Activities
+- `DiscoverJobURLs` - Find job URLs from a page
+- `CrawlJobBatch` - Crawl multiple URLs in batch
+- `ParseJobActivity` - Parse job HTML into structured data
+- `ScoreJobActivity` - Calculate authenticity score
+- `ExtractHiringManagerActivity` - Extract hiring manager info
+
+#### Discovery Activities
+- `DiscoverCompaniesFromGitHub` - Find companies via GitHub
+- `DiscoverCompaniesFromGoogleDorks` - Find via Google Dorks
+- `DiscoverCareerPages` - Find career pages for a domain
+- `EnumerateSubdomains` - Enumerate company subdomains
+- `DetectATS` - Detect ATS platform and confidence
+- `QueueURLsForCrawling` - Add URLs to crawl queue
+- `GenerateDorkQueries` - Generate Google Dork queries
+- `ExecuteDorkQuery` - Execute a dork query
+- `DetectATSAndExtractDomain` - Combined ATS detection + domain extraction
+
+### Monitoring Workflows
+
+```bash
+# Check worker logs
+docker-compose logs -f worker
+
+# Access Temporal UI
+open http://localhost:8080
+
+# View workflow executions, activity history, and errors in the UI
+```
+
+## Testing
+
+### Run All Tests
+
+```bash
+# Go tests
+cd apps/api
+go test ./...
+
+# Python tests
+cd apps/parser
+uv run pytest
+```
+
+### Manual Testing
+
+```bash
+# Test full flow: Discovery → Crawl → Parse
+# 1. Discover career pages
+curl -X POST http://localhost:8004/api/v1/discover/career-pages \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "stripe.com"}'
+
+# 2. Crawl discovered URLs
+curl -X POST http://localhost:8002/crawl-batch \
+  -H "Content-Type: application/json" \
+  -d '["https://stripe.com/jobs"]'
+
+# 3. Parse job HTML
+curl -X POST http://localhost:8001/api/v1/parse \
+  -H "Content-Type: application/json" \
+  -d '{"html": "<html>...</html>", "url": "https://stripe.com/jobs/123"}'
+
+# 4. Verify in database
+docker exec quiethire-clickhouse clickhouse-client --database=quiethire \
+  -q "SELECT * FROM jobs ORDER BY crawled_at DESC LIMIT 5;"
+```
 
 ## Troubleshooting
 
-### Services won't start
+### Services Won't Start
+
 ```bash
-# Check logs
-docker compose logs [service-name]
+# Check logs for specific service
+docker-compose logs api
+docker-compose logs worker
 
-# Restart specific service
-docker compose restart [service-name]
+# Restart service
+docker-compose restart api
 
-# Clean rebuild
-docker compose down -v
-docker compose up --build
+# Rebuild and restart
+docker-compose up -d --build api
+
+# Clean restart all services
+docker-compose down -v
+docker-compose up -d
 ```
 
-### Database connection errors
-- Ensure PostgreSQL and ClickHouse are healthy: `docker compose ps`
-- Check credentials in `.env` file
-- Verify network connectivity: `docker network ls`
+### Database Connection Errors
 
-### Go module issues
 ```bash
-cd apps/api  # or other Go service
-go mod tidy
-go mod download
+# Check database health
+docker-compose ps | grep -E "(postgres|clickhouse|typesense)"
+
+# Verify containers are healthy
+docker inspect quiethire-postgres | grep Status
+docker inspect quiethire-clickhouse | grep Status
+
+# Check database credentials in .env
+cat .env | grep -E "(DB_|CLICKHOUSE_|TYPESENSE_)"
+
+# Test database connections
+docker exec quiethire-postgres psql -U quiethire -d quiethire -c "SELECT 1;"
+docker exec quiethire-clickhouse clickhouse-client --database=quiethire -q "SELECT 1;"
+curl -H "X-TYPESENSE-API-KEY: your-key" http://localhost:8108/health
 ```
+
+### Worker Not Processing Workflows
+
+```bash
+# Check worker logs
+docker-compose logs worker | tail -50
+
+# Verify worker registered workflows and activities
+docker-compose logs worker | grep "Registered"
+
+# Check Temporal connection
+docker-compose logs worker | grep "Temporal"
+
+# Restart worker
+docker-compose restart worker
+```
+
+### Crawler Issues
+
+```bash
+# Check if browser is ready
+curl http://localhost:8002/health | jq .
+
+# View crawler logs
+docker-compose logs crawler-python
+
+# Test direct crawl
+curl -X POST http://localhost:8002/crawl-batch \
+  -H "Content-Type: application/json" \
+  -d '["https://example.com"]'
+```
+
+### Parser Not Working
+
+```bash
+# Check GROQ API key
+echo $GROQ_API_KEY
+
+# Test parser with sample data
+curl -X POST http://localhost:8001/api/v1/parse \
+  -H "Content-Type: application/json" \
+  -d '{"html":"<html><head><script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Test Job\"}</script></head></html>","url":"https://test.com"}'
+```
+
+### ClickHouse Query Issues
+
+```bash
+# Always specify the database
+docker exec quiethire-clickhouse clickhouse-client --database=quiethire
+
+# Common issue: Using default database instead of quiethire
+# WRONG: clickhouse-client -q "SELECT * FROM jobs"
+# RIGHT:  clickhouse-client --database=quiethire -q "SELECT * FROM jobs"
+```
+
+## Performance Tuning
+
+### Scaling Crawlers
+
+```bash
+# Increase crawler instances
+docker-compose up -d --scale crawler-python=10
+
+# Monitor resource usage
+docker stats
+```
+
+### Database Optimization
+
+```bash
+# ClickHouse: Optimize tables
+docker exec quiethire-clickhouse clickhouse-client --database=quiethire \
+  -q "OPTIMIZE TABLE jobs FINAL;"
+
+# PostgreSQL: Vacuum and analyze
+docker exec quiethire-postgres psql -U quiethire -d quiethire \
+  -c "VACUUM ANALYZE;"
+```
+
+## Roadmap
+
+### Next Features (In Priority Order)
+
+1. **Frontend Dashboard** - React/Next.js UI for job search and management
+2. **Real-time Job Scoring** - Implement authenticity scoring algorithm
+3. **Email Generation** - AI-powered personalized emails to hiring managers
+4. **Manager Extraction** - Extract hiring manager contact info from LinkedIn/company pages
+5. **Advanced Filtering** - Salary range, experience level, tech stack filters
+6. **Job Alerts** - Email/webhook notifications for new matching jobs
+7. **Company Profiles** - Track companies, funding, tech stack, hiring trends
+8. **Analytics Dashboard** - Job market trends, salary insights, demand metrics
+
+### Future Enhancements
+
+- [ ] GraphQL API for flexible querying
+- [ ] WebSocket support for real-time updates
+- [ ] Machine learning for job quality prediction
+- [ ] Browser extension for one-click job tracking
+- [ ] Mobile app (React Native)
+- [ ] Multi-tenant support for recruiters
 
 ## Contributing
 
-This is a solo developer project. For questions or issues, refer to:
-- `docs/plan.md` - Development roadmap
-- `docs/architecture.md` - System architecture
-- `docs/overview.md` - Project overview
+This is currently a solo project. For questions or suggestions:
+- Open an issue on GitHub
+- Review `docs/` for detailed architecture and planning docs
