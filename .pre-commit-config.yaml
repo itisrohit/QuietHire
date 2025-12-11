@@ -33,7 +33,7 @@ repos:
       - id: mypy
         additional_dependencies: [types-all]
         args: [--config-file=pyproject.toml]
-        files: ^apps/(parser|realscore|email-writer|manager-extractor)/.*\.py$
+        files: ^apps/(parser|crawler-python|osint-discovery)/.*\.py$
 
   # Go: Format and imports
   - repo: https://github.com/dnephin/pre-commit-golang

@@ -9,10 +9,12 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	App       AppConfig
-	Database  DatabaseConfig
-	Typesense TypesenseConfig
-	Redis     RedisConfig
+	App        AppConfig
+	Database   DatabaseConfig
+	ClickHouse ClickHouseConfig
+	Typesense  TypesenseConfig
+	Redis      RedisConfig
+	Services   ServicesConfig
 }
 
 // AppConfig contains application-level settings
@@ -33,6 +35,15 @@ type DatabaseConfig struct {
 	Port     int
 }
 
+// ClickHouseConfig contains ClickHouse database settings
+type ClickHouseConfig struct {
+	Host     string
+	Port     int
+	Database string
+	User     string
+	Password string
+}
+
 // TypesenseConfig contains Typesense search engine settings
 type TypesenseConfig struct {
 	Host   string
@@ -44,6 +55,13 @@ type TypesenseConfig struct {
 type RedisConfig struct {
 	Host string
 	Port int
+}
+
+// ServicesConfig contains URLs for microservices
+type ServicesConfig struct {
+	CrawlerURL string
+	ParserURL  string
+	OSINTUrl   string
 }
 
 // Load reads configuration from environment variables
@@ -63,6 +81,13 @@ func Load() (*Config, error) {
 			Database: getEnv("DB_NAME", "quiethire"),
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
+		ClickHouse: ClickHouseConfig{
+			Host:     getEnv("CLICKHOUSE_HOST", "localhost"),
+			Port:     getEnvAsInt("CLICKHOUSE_PORT", 9000),
+			Database: getEnv("CLICKHOUSE_DB", "quiethire"),
+			User:     getEnv("CLICKHOUSE_USER", "default"),
+			Password: getEnv("CLICKHOUSE_PASSWORD", ""),
+		},
 		Typesense: TypesenseConfig{
 			Host:   getEnv("TYPESENSE_HOST", "localhost"),
 			Port:   getEnvAsInt("TYPESENSE_PORT", 8108),
@@ -71,6 +96,11 @@ func Load() (*Config, error) {
 		Redis: RedisConfig{
 			Host: getEnv("REDIS_HOST", "localhost"),
 			Port: getEnvAsInt("REDIS_PORT", 6379),
+		},
+		Services: ServicesConfig{
+			CrawlerURL: getEnv("CRAWLER_SERVICE_URL", "http://localhost:8002"),
+			ParserURL:  getEnv("PARSER_SERVICE_URL", "http://localhost:8001"),
+			OSINTUrl:   getEnv("OSINT_SERVICE_URL", "http://localhost:8004"),
 		},
 	}
 	if cfg.Database.Password == "" {

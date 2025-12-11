@@ -2,17 +2,27 @@
 package activities
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"time"
 )
 
 // CrawlActivities contains all crawling-related activities
 type CrawlActivities struct {
-	// Dependencies will be injected here (DB, HTTP client, etc.)
+	// HTTP client for calling microservices
+	HTTPClient *http.Client
+
+	// Service URLs
+	CrawlerURL string
+	ParserURL  string
+	OSINTUrl   string
 }
 
 // JobData represents a crawled job
@@ -102,27 +112,66 @@ func (a *CrawlActivities) CrawlJobBatch(ctx context.Context, urls []string, plat
 	}, nil
 }
 
-// crawlSingleJob crawls a single job URL
-//
-//nolint:unparam // Placeholder function - will return errors in production
-func (a *CrawlActivities) crawlSingleJob(_ context.Context, url, platform string) (*JobData, error) {
-	// TODO: Implement actual crawling logic with playwright-go
-	// This is a placeholder
+// crawlSingleJob crawls a single job URL using the Python Crawler service
+func (a *CrawlActivities) crawlSingleJob(ctx context.Context, url, platform string) (*JobData, error) {
+	// Call the Python crawler service
+	payload := map[string]interface{}{
+		"urls": []string{url},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.CrawlerURL+"/crawl/batch", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call crawler service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("crawler service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Results []struct {
+			URL     string `json:"url"`
+			HTML    string `json:"html"`
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Results) == 0 || !result.Results[0].Success {
+		errMsg := "unknown error"
+		if len(result.Results) > 0 {
+			errMsg = result.Results[0].Error
+		}
+		return nil, fmt.Errorf("crawl failed: %s", errMsg)
+	}
 
 	// Generate a unique ID based on URL using SHA256
 	hash := sha256.Sum256([]byte(url))
 	id := hex.EncodeToString(hash[:])
 
 	jobData := &JobData{
-		ID:          id,
-		Title:       "Software Engineer (Placeholder)",
-		Company:     "Example Company",
-		Description: "This is a placeholder job description",
-		Location:    "Remote",
-		URL:         url,
-		Platform:    platform,
-		HTML:        "<html>Placeholder HTML</html>",
-		CrawledAt:   time.Now(),
+		ID:        id,
+		URL:       url,
+		Platform:  platform,
+		HTML:      result.Results[0].HTML,
+		CrawledAt: time.Now(),
 	}
 
 	return jobData, nil
@@ -142,20 +191,47 @@ func (a *CrawlActivities) storeJobData(_ context.Context, job *JobData) error {
 	return nil
 }
 
-// ParseJobActivity parses raw HTML into structured job data
-func (a *CrawlActivities) ParseJobActivity(_ context.Context, jobID string, _ string) (map[string]interface{}, error) {
+// ParseJobActivity parses raw HTML into structured job data using Parser service
+func (a *CrawlActivities) ParseJobActivity(ctx context.Context, jobID string, html string) (map[string]interface{}, error) {
 	log.Printf("Parsing job: %s", jobID)
 
-	// TODO: Call the Parser service API
-	// This should send HTML to the parser service and get back structured data
+	// Call the Parser service
+	payload := map[string]string{
+		"html": html,
+	}
 
-	// Placeholder response
-	return map[string]interface{}{
-		"title":       "Parsed Job Title",
-		"company":     "Parsed Company",
-		"description": "Parsed description",
-		"location":    "Parsed location",
-	}, nil
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.ParserURL+"/parse", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call parser service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 422 {
+		return nil, fmt.Errorf("no structured data found in HTML (requires JSON-LD JobPosting schema)")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("parser service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result, nil
 }
 
 // ScoreJobActivity calculates authenticity score for a job

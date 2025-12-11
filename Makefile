@@ -38,12 +38,11 @@ lint-go: ## Lint Go code
 	@echo "$(YELLOW)Linting Go code...$(NC)"
 	@cd apps/api && golangci-lint run --config ../../.golangci.yml ./... || (echo "$(RED)✗ Go linting failed in apps/api$(NC)" && exit 1)
 	@cd apps/proxy-manager && golangci-lint run --config ../../.golangci.yml ./... || (echo "$(RED)✗ Go linting failed in apps/proxy-manager$(NC)" && exit 1)
-	@cd apps/crawler-go && golangci-lint run --config ../../.golangci.yml ./... || (echo "$(RED)✗ Go linting failed in apps/crawler-go$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Go linting passed$(NC)"
 
 lint-python: ## Lint Python code
 	@echo "$(YELLOW)Linting Python code...$(NC)"
-	@ruff check apps/parser apps/realscore apps/email-writer apps/manager-extractor || (echo "$(RED)✗ Python linting failed$(NC)" && exit 1)
+	@ruff check apps/parser apps/crawler-python apps/osint-discovery || (echo "$(RED)✗ Python linting failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Python linting passed$(NC)"
 
 type-check: type-check-go type-check-python ## Run all type checkers
@@ -52,33 +51,31 @@ type-check-go: ## Type check Go code (via golangci-lint)
 	@echo "$(YELLOW)Type checking Go code...$(NC)"
 	@cd apps/api && go vet ./... || (echo "$(RED)✗ Go type checking failed$(NC)" && exit 1)
 	@cd apps/proxy-manager && go vet ./... || (echo "$(RED)✗ Go type checking failed$(NC)" && exit 1)
-	@cd apps/crawler-go && go vet ./... || (echo "$(RED)✗ Go type checking failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Go type checking passed$(NC)"
 
 type-check-python: ## Type check Python code with mypy
 	@echo "$(YELLOW)Type checking Python code...$(NC)"
 	@mypy apps/parser/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
-	@mypy apps/realscore/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
-	@mypy apps/email-writer/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
-	@mypy apps/manager-extractor/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
+	@mypy apps/crawler-python/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
+	@mypy apps/osint-discovery/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Python type checking passed$(NC)"
 
 format: format-go format-python ## Format all code
 
 format-go: ## Format Go code
 	@echo "$(YELLOW)Formatting Go code...$(NC)"
-	@gofmt -w -s apps/api apps/proxy-manager apps/crawler-go
-	@goimports -w apps/api apps/proxy-manager apps/crawler-go
+	@gofmt -w -s apps/api apps/proxy-manager
+	@goimports -w apps/api apps/proxy-manager
 	@echo "$(GREEN)✓ Go code formatted$(NC)"
 
 format-python: ## Format Python code
 	@echo "$(YELLOW)Formatting Python code...$(NC)"
-	@ruff format apps/parser apps/realscore apps/email-writer apps/manager-extractor
+	@ruff format apps/parser apps/crawler-python apps/osint-discovery
 	@echo "$(GREEN)✓ Python code formatted$(NC)"
 
 fix: ## Auto-fix linting issues where possible
 	@echo "$(YELLOW)Auto-fixing issues...$(NC)"
-	@ruff check --fix apps/parser apps/realscore apps/email-writer apps/manager-extractor
+	@ruff check --fix apps/parser apps/crawler-python apps/osint-discovery
 	@$(MAKE) format
 	@echo "$(GREEN)✓ Auto-fix complete$(NC)"
 

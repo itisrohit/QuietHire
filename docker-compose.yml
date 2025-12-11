@@ -216,54 +216,32 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     networks:
       - quiethire-network
     restart: unless-stopped
 
-  # RealScore Service
-  realscore:
+  # Python Crawler Service
+  crawler-python:
     build:
-      context: ./apps/realscore
+      context: ./apps/crawler-python
       dockerfile: Dockerfile
-    container_name: quiethire-realscore
+    container_name: quiethire-crawler-python
     ports:
       - "8002:8000"
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - MIN_REALSCORE_THRESHOLD=${MIN_REALSCORE_THRESHOLD:-70}
+      - PROXY_MANAGER_URL=http://proxy-manager:8000
+      - PARSER_URL=http://parser:8000
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    networks:
-      - quiethire-network
-    restart: unless-stopped
-
-  # Manager Extractor Service
-  manager-extractor:
-    build:
-      context: ./apps/manager-extractor
-      dockerfile: Dockerfile
-    container_name: quiethire-manager-extractor
-    ports:
-      - "8003:8000"
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-    networks:
-      - quiethire-network
-    restart: unless-stopped
-
-  # Email Writer Service
-  email-writer:
-    build:
-      context: ./apps/email-writer
-      dockerfile: Dockerfile
-    container_name: quiethire-email-writer
-    ports:
-      - "8004:8000"
-    environment:
-      - LLAMA_API_KEY=${LLAMA_API_KEY}
-      - LLAMA_MODEL=${LLAMA_MODEL:-llama-3.3-70b-versatile}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      - proxy-manager
+      - parser
+      - postgres
     networks:
       - quiethire-network
     restart: unless-stopped
@@ -275,7 +253,7 @@ services:
       dockerfile: Dockerfile
     container_name: quiethire-proxy-manager
     ports:
-      - "8005:8000"
+      - "8003:8000"
     environment:
       - REDIS_HOST=${REDIS_HOST:-dragonfly}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -286,6 +264,31 @@ services:
     depends_on:
       dragonfly:
         condition: service_started
+    networks:
+      - quiethire-network
+    restart: unless-stopped
+
+  # OSINT Discovery Service
+  osint-discovery:
+    build:
+      context: ./apps/osint-discovery
+      dockerfile: Dockerfile
+    container_name: quiethire-osint-discovery
+    ports:
+      - "8004:8000"
+    environment:
+      - SERPAPI_API_KEY=${SERPAPI_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - CRUNCHBASE_API_KEY=${CRUNCHBASE_API_KEY}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - quiethire-network
     restart: unless-stopped
