@@ -105,6 +105,7 @@ func main() {
 	w.RegisterWorkflow(workflows.CompanyDiscoveryWorkflow)
 	w.RegisterWorkflow(workflows.ContinuousDiscoveryWorkflow)
 	w.RegisterWorkflow(workflows.GoogleDorkDiscoveryWorkflow)
+	w.RegisterWorkflow(workflows.CareerPageCrawlWorkflow) // NEW: Career page crawling workflow
 
 	// Get service URLs from environment or config
 	crawlerURL := getEnv("CRAWLER_SERVICE_URL", "http://localhost:8002")
@@ -124,6 +125,10 @@ func main() {
 	w.RegisterActivity(crawlActivities.ParseJobActivity)
 	w.RegisterActivity(crawlActivities.ScoreJobActivity)
 	w.RegisterActivity(crawlActivities.ExtractHiringManagerActivity)
+	w.RegisterActivity(crawlActivities.CrawlCareerPage)       // NEW
+	w.RegisterActivity(crawlActivities.ExtractJobLinks)       // NEW: Extract job links from career pages
+	w.RegisterActivity(crawlActivities.ParseJobPage)          // NEW: Parse individual job pages
+	w.RegisterActivity(crawlActivities.StoreJobsInClickHouse) // NEW
 
 	// Initialize and register discovery activities
 	discoveryActivities := &activities.DiscoveryActivities{
@@ -150,6 +155,7 @@ func main() {
 	log.Println("  - CompanyDiscoveryWorkflow")
 	log.Println("  - ContinuousDiscoveryWorkflow")
 	log.Println("  - GoogleDorkDiscoveryWorkflow")
+	log.Println("  - CareerPageCrawlWorkflow")
 	log.Println("Registered Activities:")
 	log.Println("  Crawl Activities:")
 	log.Println("    - DiscoverJobURLs")
@@ -157,6 +163,10 @@ func main() {
 	log.Println("    - ParseJobActivity")
 	log.Println("    - ScoreJobActivity")
 	log.Println("    - ExtractHiringManagerActivity")
+	log.Println("    - CrawlCareerPage")
+	log.Println("    - ExtractJobLinks")
+	log.Println("    - ParseJobPage")
+	log.Println("    - StoreJobsInClickHouse")
 	log.Println("  Discovery Activities:")
 	log.Println("    - DiscoverCompaniesFromGitHub")
 	log.Println("    - DiscoverCompaniesFromGoogleDorks")

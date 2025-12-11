@@ -26,6 +26,7 @@ env/
 ENV/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 *.egg-info/
 dist/
 build/
@@ -54,3 +55,5 @@ apps/*/worker
 apps/*/crawler-go
 apps/*/proxy-manager
 **/cmd/*/main
+apps/api/seed-companies
+apps/api/trigger-discovery

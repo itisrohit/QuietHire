@@ -2,6 +2,7 @@
 package workflows
 
 import (
+	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -140,4 +141,195 @@ func ScheduledCrawlWorkflow(ctx workflow.Context) error {
 	}
 
 	return nil
+}
+
+// CareerPageCrawlInput defines input for crawling a discovered career page
+type CareerPageCrawlInput struct {
+	URL         string
+	CompanyName string
+	CompanyID   int
+}
+
+// CareerPageCrawlResult defines the result of crawling a career page
+type CareerPageCrawlResult struct {
+	URL          string
+	JobsFound    int
+	JobsStored   int
+	Success      bool
+	ErrorMessage string
+	Duration     time.Duration
+}
+
+// CareerPageCrawlWorkflow orchestrates crawling a single career page and extracting jobs
+func CareerPageCrawlWorkflow(ctx workflow.Context, input CareerPageCrawlInput) (*CareerPageCrawlResult, error) {
+	logger := workflow.GetLogger(ctx)
+	logger.Info("Starting CareerPageCrawlWorkflow",
+		"url", input.URL,
+		"company", input.CompanyName)
+
+	startTime := workflow.Now(ctx)
+	result := &CareerPageCrawlResult{
+		URL:     input.URL,
+		Success: false,
+	}
+
+	// Set activity options with retries
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    2 * time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    30 * time.Second,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+
+	// Step 1: Crawl the career page to get HTML
+	logger.Info("Step 1: Crawling career page", "url", input.URL)
+	var crawlResult struct {
+		URL     string
+		HTML    string
+		Success bool
+		Error   string
+	}
+
+	crawlInput := map[string]interface{}{
+		"URL":         input.URL,
+		"CompanyName": input.CompanyName,
+	}
+
+	err := workflow.ExecuteActivity(ctx, "CrawlCareerPage", crawlInput).Get(ctx, &crawlResult)
+	if err != nil {
+		result.ErrorMessage = fmt.Sprintf("failed to crawl page: %v", err)
+		logger.Error("Crawl failed", "error", err)
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil // Return result instead of error to mark workflow complete
+	}
+
+	if !crawlResult.Success {
+		result.ErrorMessage = fmt.Sprintf("crawl unsuccessful: %s", crawlResult.Error)
+		logger.Warn("Crawl unsuccessful", "error", crawlResult.Error)
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil
+	}
+
+	logger.Info("Successfully crawled page", "html_size", len(crawlResult.HTML))
+
+	// Step 2: Extract job links from the career page HTML
+	logger.Info("Step 2: Extracting job links from HTML")
+	var jobLinks []struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	err = workflow.ExecuteActivity(ctx, "ExtractJobLinks", input.URL, crawlResult.HTML).Get(ctx, &jobLinks)
+	if err != nil {
+		result.ErrorMessage = fmt.Sprintf("failed to extract job links: %v", err)
+		logger.Error("Extract job links failed", "error", err)
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil
+	}
+
+	logger.Info("Extracted job links", "count", len(jobLinks))
+
+	if len(jobLinks) == 0 {
+		logger.Info("No job links found on career page")
+		result.Success = true
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil
+	}
+
+	// Step 3: Crawl each individual job page (limit to first 5 for MVP)
+	maxJobsToCrawl := 5
+	if len(jobLinks) > maxJobsToCrawl {
+		logger.Info("Limiting job crawl", "total_links", len(jobLinks), "max", maxJobsToCrawl)
+		jobLinks = jobLinks[:maxJobsToCrawl]
+	}
+
+	result.JobsFound = len(jobLinks)
+	jobs := make([]map[string]interface{}, 0, len(jobLinks))
+
+	for i, link := range jobLinks {
+		logger.Info("Step 3: Crawling individual job page",
+			"index", i+1,
+			"total", len(jobLinks),
+			"url", link.URL)
+
+		// Crawl the job detail page
+		var jobPageCrawlResult struct {
+			URL     string
+			HTML    string
+			Success bool
+			Error   string
+		}
+
+		jobCrawlInput := map[string]interface{}{
+			"URL":         link.URL,
+			"CompanyName": input.CompanyName,
+		}
+
+		err = workflow.ExecuteActivity(ctx, "CrawlCareerPage", jobCrawlInput).Get(ctx, &jobPageCrawlResult)
+		if err != nil || !jobPageCrawlResult.Success {
+			logger.Warn("Failed to crawl job page", "url", link.URL, "error", err)
+			continue
+		}
+
+		logger.Info("Successfully crawled job page", "url", link.URL, "html_size", len(jobPageCrawlResult.HTML))
+
+		// Parse the job page for JSON-LD structured data
+		var parsedJob map[string]interface{}
+		err = workflow.ExecuteActivity(ctx, "ParseJobPage", link.URL, jobPageCrawlResult.HTML, input.CompanyName).Get(ctx, &parsedJob)
+		if err != nil {
+			logger.Warn("Failed to parse job page", "url", link.URL, "error", err)
+			continue
+		}
+
+		// If parsedJob is nil, it means no structured data was found (422 response)
+		if parsedJob == nil {
+			logger.Info("No structured data found on job page", "url", link.URL)
+			continue
+		}
+
+		// Add source URL if not present
+		if parsedJob["source_url"] == nil || parsedJob["source_url"] == "" {
+			parsedJob["source_url"] = link.URL
+		}
+		if parsedJob["source_platform"] == nil || parsedJob["source_platform"] == "" {
+			parsedJob["source_platform"] = "career_page"
+		}
+
+		jobs = append(jobs, parsedJob)
+		logger.Info("Successfully parsed job", "title", parsedJob["title"], "company", parsedJob["company"])
+	}
+
+	logger.Info("Parsed jobs from individual pages", "count", len(jobs))
+
+	if len(jobs) == 0 {
+		logger.Info("No jobs with structured data found")
+		result.Success = true
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil
+	}
+
+	// Step 4: Store jobs in ClickHouse
+	logger.Info("Step 4: Storing jobs in ClickHouse", "count", len(jobs))
+	var storedCount int
+	err = workflow.ExecuteActivity(ctx, "StoreJobsInClickHouse", jobs, input.URL).Get(ctx, &storedCount)
+	if err != nil {
+		result.ErrorMessage = fmt.Sprintf("failed to store jobs: %v", err)
+		logger.Error("Storage failed", "error", err)
+		result.Duration = workflow.Now(ctx).Sub(startTime)
+		return result, nil
+	}
+
+	result.JobsStored = storedCount
+	result.Success = true
+	result.Duration = workflow.Now(ctx).Sub(startTime)
+
+	logger.Info("CareerPageCrawlWorkflow completed",
+		"jobs_found", result.JobsFound,
+		"jobs_stored", result.JobsStored,
+		"duration", result.Duration)
+
+	return result, nil
 }

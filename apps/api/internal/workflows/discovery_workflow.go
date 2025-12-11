@@ -126,7 +126,7 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 		}
 	}
 
-	// Step 4: Queue all discovered URLs for crawling
+	// Step 4: Queue all discovered URLs for crawling (store in DB)
 	var queueFuture workflow.Future
 	queueFuture = workflow.ExecuteActivity(ctx, "QueueURLsForCrawling", allCareerPages)
 
@@ -137,12 +137,64 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 	}
 	result.TotalURLsQueued = queued
 
+	// Step 5: Trigger CareerPageCrawlWorkflow for each discovered career page
+	logger.Info("Triggering crawl workflows for career pages", "count", len(allCareerPages))
+
+	// Create a map to group pages by company
+	pagesByCompany := make(map[string][]CareerPageInfo)
+	for _, page := range allCareerPages {
+		pagesByCompany[page.Domain] = append(pagesByCompany[page.Domain], page)
+	}
+
+	var crawlFutures []workflow.ChildWorkflowFuture
+	for domain, pages := range pagesByCompany {
+		// Find the company name for this domain
+		companyName := domain
+		for _, company := range allCompanies {
+			if company.Domain == domain {
+				companyName = company.Name
+				break
+			}
+		}
+
+		// Start a crawl workflow for each career page
+		for _, page := range pages {
+			crawlInput := CareerPageCrawlInput{
+				URL:         page.URL,
+				CompanyName: companyName,
+			}
+
+			childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+				WorkflowID: "career-crawl-" + workflow.Now(ctx).Format("20060102150405") + "-" + page.Domain,
+			})
+
+			future := workflow.ExecuteChildWorkflow(childCtx, CareerPageCrawlWorkflow, crawlInput)
+			crawlFutures = append(crawlFutures, future)
+		}
+	}
+
+	// Wait for all crawl workflows to complete (don't block the main workflow)
+	// We'll just count successes
+	crawlSuccesses := 0
+	for _, future := range crawlFutures {
+		var crawlResult CareerPageCrawlResult
+		if getErr := future.Get(ctx, &crawlResult); getErr != nil {
+			logger.Error("Crawl workflow failed", "error", getErr)
+		} else if crawlResult.Success {
+			crawlSuccesses++
+		}
+	}
+
+	logger.Info("Crawl workflows completed", "success", crawlSuccesses, "total", len(crawlFutures))
+
 	result.Duration = workflow.Now(ctx).Sub(startTime)
 
 	logger.Info("CompanyDiscoveryWorkflow completed",
 		"companies", result.CompaniesFound,
 		"career_pages", result.CareerPagesFound,
 		"urls_queued", result.TotalURLsQueued,
+		"crawls_triggered", len(crawlFutures),
+		"crawls_successful", crawlSuccesses,
 		"duration", result.Duration)
 
 	return result, nil

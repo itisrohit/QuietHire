@@ -356,3 +356,241 @@ func (a *CrawlActivities) ExtractHiringManagerActivity(_ context.Context, jobDat
 		"email": "john.doe@example.com",
 	}, nil
 }
+
+// CrawlCareerPageInput defines input for crawling a career page
+type CrawlCareerPageInput struct {
+	URL         string
+	CompanyName string
+}
+
+// CrawlCareerPageResult defines the result of crawling a career page
+type CrawlCareerPageResult struct {
+	URL       string
+	HTML      string
+	JobsFound int
+	Success   bool
+	Error     string
+}
+
+// CrawlCareerPage crawls a career page URL and returns HTML
+func (a *CrawlActivities) CrawlCareerPage(ctx context.Context, input CrawlCareerPageInput) (*CrawlCareerPageResult, error) {
+	log.Printf("Crawling career page: %s for company: %s", input.URL, input.CompanyName)
+
+	// Call the Python crawler service - expects a list of URLs directly
+	payload := []string{input.URL}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.CrawlerURL+"/crawl-batch", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call crawler service: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &CrawlCareerPageResult{
+			URL:     input.URL,
+			Success: false,
+			Error:   fmt.Sprintf("crawler service returned status %d: %s", resp.StatusCode, string(bodyBytes)),
+		}, nil
+	}
+
+	// Response is an array of CrawlResponse objects
+	var results []struct {
+		URL     string `json:"url"`
+		HTML    string `json:"html"`
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(results) == 0 {
+		return &CrawlCareerPageResult{
+			URL:     input.URL,
+			Success: false,
+			Error:   "no results returned from crawler",
+		}, nil
+	}
+
+	result := results[0]
+	if !result.Success {
+		return &CrawlCareerPageResult{
+			URL:     input.URL,
+			Success: false,
+			Error:   result.Error,
+		}, nil
+	}
+
+	log.Printf("✅ Successfully crawled career page: %s (%d bytes)", input.URL, len(result.HTML))
+
+	return &CrawlCareerPageResult{
+		URL:     input.URL,
+		HTML:    result.HTML,
+		Success: true,
+	}, nil
+}
+
+// JobLink represents a job link extracted from a career page
+type JobLink struct {
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// ExtractJobLinks extracts individual job posting URLs from a career page HTML
+func (a *CrawlActivities) ExtractJobLinks(ctx context.Context, url string, html string) ([]JobLink, error) {
+	log.Printf("Extracting job links from career page: %s", url)
+
+	// Call the Parser service with /api/v1/extract-job-links endpoint
+	payload := map[string]interface{}{
+		"html": html,
+		"url":  url,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.ParserURL+"/api/v1/extract-job-links", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call parser service: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close parser response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("parser service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		JobLinks   []JobLink `json:"job_links"`
+		TotalCount int       `json:"total_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	log.Printf("✅ Extracted %d job links from career page: %s", result.TotalCount, url)
+	return result.JobLinks, nil
+}
+
+// ParseJobPage parses a single job detail page and extracts structured data
+func (a *CrawlActivities) ParseJobPage(ctx context.Context, url string, html string, companyName string) (map[string]interface{}, error) {
+	log.Printf("Parsing job detail page: %s", url)
+
+	// Call the Parser service with /api/v1/parse endpoint
+	payload := map[string]interface{}{
+		"html": html,
+		"url":  url,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.ParserURL+"/api/v1/parse", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call parser service: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close parser response body: %v", err)
+		}
+	}()
+
+	// If parser can't find structured data (422), return nil (no job found)
+	if resp.StatusCode == 422 {
+		log.Printf("No structured job data found on page: %s", url)
+		return nil, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("parser service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Add company name if not present
+	if result["company"] == nil || result["company"] == "" {
+		result["company"] = companyName
+	}
+
+	log.Printf("✅ Successfully parsed job: %s from %s", result["title"], companyName)
+	return result, nil
+}
+
+// StoreJobsInClickHouse stores multiple parsed jobs in ClickHouse
+func (a *CrawlActivities) StoreJobsInClickHouse(ctx context.Context, jobs []map[string]interface{}, sourceURL string) (int, error) {
+	if a.ClickHouse == nil {
+		log.Println("Warning: ClickHouse connection not available, skipping storage")
+		return 0, nil
+	}
+
+	stored := 0
+	for i, job := range jobs {
+		// Generate unique job ID
+		jobID := fmt.Sprintf("%s-%d-%d", sha256Hash(sourceURL), i, time.Now().Unix())
+
+		// Ensure required fields exist
+		if job["source_url"] == nil || job["source_url"] == "" {
+			job["source_url"] = sourceURL
+		}
+		if job["source_platform"] == nil || job["source_platform"] == "" {
+			job["source_platform"] = "career_page"
+		}
+
+		// Store the job
+		if err := a.storeParsedJob(ctx, jobID, job); err != nil {
+			log.Printf("Warning: Failed to store job %d: %v", i, err)
+			continue
+		}
+		stored++
+	}
+
+	log.Printf("✅ Stored %d/%d jobs in ClickHouse", stored, len(jobs))
+	return stored, nil
+}
+
+// sha256Hash is a helper to generate SHA256 hash
+func sha256Hash(s string) string {
+	hash := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for shorter IDs
+}

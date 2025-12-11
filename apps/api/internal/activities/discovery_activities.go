@@ -37,7 +37,7 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGitHub(ctx context.Context, q
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/discover/github", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/discover/github", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -127,7 +127,7 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGoogleDorks(ctx context.Conte
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/discover/google-dork", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/discover/google-dork", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -207,7 +207,7 @@ func (a *DiscoveryActivities) DiscoverCareerPages(ctx context.Context, domain st
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/discover/career-pages", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/discover/career-pages", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,7 +268,7 @@ func (a *DiscoveryActivities) EnumerateSubdomains(ctx context.Context, domain st
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/discover/subdomains", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/enumerate/subdomains", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -326,7 +326,7 @@ func (a *DiscoveryActivities) DetectATS(ctx context.Context, url string) (ATSInf
 		return ATSInfo{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/detect/ats", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/detect/ats", bytes.NewBuffer(body))
 	if err != nil {
 		return ATSInfo{}, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -445,7 +445,7 @@ func (a *DiscoveryActivities) ExecuteDorkQuery(ctx context.Context, query string
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/discover/google-dork", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.OSINTUrl+"/api/v1/discover/google-dork", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
