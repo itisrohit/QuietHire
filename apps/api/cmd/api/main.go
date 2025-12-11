@@ -231,7 +231,11 @@ func main() {
 				"error": "Failed to fetch jobs",
 			})
 		}
-		defer rows.Close()
+		defer func() {
+			if err := rows.Close(); err != nil {
+				log.Printf("Failed to close rows: %v", err)
+			}
+		}()
 
 		var jobs []map[string]interface{}
 		for rows.Next() {
@@ -287,9 +291,9 @@ func main() {
 		}
 
 		var stats struct {
-			TotalJobs     int64   `ch:"total_jobs"`
-			ActiveJobs    int64   `ch:"active_jobs"`
-			Companies     int64   `ch:"companies"`
+			TotalJobs     uint64  `ch:"total_jobs"`
+			ActiveJobs    uint64  `ch:"active_jobs"`
+			Companies     uint64  `ch:"companies"`
 			AvgRealScore  float64 `ch:"avg_real_score"`
 			LastCrawledAt string  `ch:"last_crawled_at"`
 		}
@@ -299,7 +303,7 @@ func main() {
 				count() as total_jobs,
 				countIf(real_score >= 70 AND posted_at >= now() - INTERVAL 90 DAY) as active_jobs,
 				uniq(company) as companies,
-				avg(real_score) as avg_real_score,
+				if(count() = 0, 0, avg(real_score)) as avg_real_score,
 				toString(max(crawled_at)) as last_crawled_at
 			FROM jobs
 		`).ScanStruct(&stats)

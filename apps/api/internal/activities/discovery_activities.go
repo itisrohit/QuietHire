@@ -4,17 +4,23 @@ package activities
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+
+	_ "github.com/lib/pq"
 )
 
 // DiscoveryActivities contains all OSINT discovery-related activities
 type DiscoveryActivities struct {
 	HTTPClient *http.Client
 	OSINTUrl   string
+	PostgreSQL *sql.DB
 }
 
 // DiscoverCompaniesFromGitHub discovers companies from GitHub
@@ -41,7 +47,11 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGitHub(ctx context.Context, q
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -68,10 +78,39 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGitHub(ctx context.Context, q
 			Description: c.Description,
 			Source:      "github",
 		}
+		// Store in database
+		if err := a.storeCompany(ctx, &companies[i]); err != nil {
+			log.Printf("Warning: Failed to store company %s: %v", c.Name, err)
+		}
 	}
 
 	log.Printf("Discovered %d companies from GitHub", len(companies))
 	return companies, nil
+}
+
+// storeCompany stores a discovered company in PostgreSQL
+func (a *DiscoveryActivities) storeCompany(ctx context.Context, company *CompanyInfo) error {
+	if a.PostgreSQL == nil {
+		log.Println("Warning: PostgreSQL connection not available, skipping storage")
+		return nil
+	}
+
+	var companyID int
+	err := a.PostgreSQL.QueryRowContext(ctx, `
+		INSERT INTO companies (name, domain, description, source)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (domain) DO UPDATE 
+		SET name = EXCLUDED.name,
+		    description = COALESCE(EXCLUDED.description, companies.description)
+		RETURNING id
+	`, company.Name, company.Domain, company.Description, company.Source).Scan(&companyID)
+
+	if err != nil {
+		return fmt.Errorf("failed to store company: %w", err)
+	}
+
+	log.Printf("✅ Stored company: %s (ID: %d)", company.Name, companyID)
+	return nil
 }
 
 // DiscoverCompaniesFromGoogleDorks discovers companies using Google dorks
@@ -98,7 +137,11 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGoogleDorks(ctx context.Conte
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -174,7 +217,11 @@ func (a *DiscoveryActivities) DiscoverCareerPages(ctx context.Context, domain st
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -231,7 +278,11 @@ func (a *DiscoveryActivities) EnumerateSubdomains(ctx context.Context, domain st
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -285,7 +336,11 @@ func (a *DiscoveryActivities) DetectATS(ctx context.Context, url string) (ATSInf
 	if err != nil {
 		return ATSInfo{}, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -311,11 +366,52 @@ func (a *DiscoveryActivities) DetectATS(ctx context.Context, url string) (ATSInf
 }
 
 // QueueURLsForCrawling queues discovered URLs for the crawler
-func (a *DiscoveryActivities) QueueURLsForCrawling(_ context.Context, pages []CareerPageInfo) (int, error) {
-	// TODO: Actually queue these URLs in a database or message queue
-	// For now, just return the count
+func (a *DiscoveryActivities) QueueURLsForCrawling(ctx context.Context, pages []CareerPageInfo) (int, error) {
 	log.Printf("Queuing %d URLs for crawling", len(pages))
-	return len(pages), nil
+
+	if a.PostgreSQL == nil {
+		log.Println("Warning: PostgreSQL connection not available, skipping storage")
+		return len(pages), nil
+	}
+
+	queued := 0
+	for _, page := range pages {
+		// Generate URL hash
+		hash := sha256.Sum256([]byte(page.URL))
+		urlHash := hex.EncodeToString(hash[:])
+
+		// Get company ID from domain
+		var companyID *int
+		err := a.PostgreSQL.QueryRowContext(ctx, `
+			SELECT id FROM companies WHERE domain = $1 LIMIT 1
+		`, page.Domain).Scan(&companyID)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("Error finding company for domain %s: %v", page.Domain, err)
+			continue
+		}
+
+		// Insert discovered URL
+		_, err = a.PostgreSQL.ExecContext(ctx, `
+			INSERT INTO discovered_urls (
+				company_id, url, url_hash, page_type, confidence,
+				ats_platform, discovered_via, priority
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (url_hash) DO UPDATE
+			SET confidence = GREATEST(discovered_urls.confidence, EXCLUDED.confidence),
+			    priority = GREATEST(discovered_urls.priority, EXCLUDED.priority)
+		`, companyID, page.URL, urlHash, page.PageType, page.Confidence,
+			page.ATSPlatform, "osint", page.Priority)
+
+		if err != nil {
+			log.Printf("Warning: Failed to queue URL %s: %v", page.URL, err)
+			continue
+		}
+
+		queued++
+	}
+
+	log.Printf("✅ Queued %d/%d URLs for crawling", queued, len(pages))
+	return queued, nil
 }
 
 // GenerateDorkQueries generates Google dork queries for a keyword
@@ -359,7 +455,11 @@ func (a *DiscoveryActivities) ExecuteDorkQuery(ctx context.Context, query string
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OSINT service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close OSINT response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)

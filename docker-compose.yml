@@ -124,15 +124,90 @@ services:
       - DB_NAME=${DB_NAME}
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-clickhouse}
       - CLICKHOUSE_PORT=9000
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-quiethire}
+      - TYPESENSE_HOST=${TYPESENSE_HOST:-typesense}
+      - TYPESENSE_PORT=${TYPESENSE_PORT:-8108}
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - CRAWLER_SERVICE_URL=${CRAWLER_SERVICE_URL:-http://crawler-python:8000}
+      - PARSER_SERVICE_URL=${PARSER_SERVICE_URL:-http://parser:8000}
+      - OSINT_SERVICE_URL=${OSINT_SERVICE_URL:-http://osint-discovery:8000}
     depends_on:
       - temporal
       - postgres
       - clickhouse
+      - crawler-python
+      - parser
+      - osint-discovery
     networks:
       - quiethire-network
     restart: unless-stopped
+
+  # Database Initialization Services
+  init-postgres:
+    image: postgres:16-alpine
+    container_name: quiethire-init-postgres
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_NAME}
+    volumes:
+      - ./config/postgres/osint-schema.sql:/schema.sql:ro
+    command: >
+      sh -c "
+        echo 'Waiting for PostgreSQL to be ready...';
+        until pg_isready; do sleep 2; done;
+        echo 'PostgreSQL is ready. Initializing schema...';
+        psql -f /schema.sql;
+        echo 'PostgreSQL schema initialized successfully!';
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - quiethire-network
+
+  init-clickhouse:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: builder
+    container_name: quiethire-init-clickhouse
+    working_dir: /app
+    environment:
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-quiethire}
+    command: ["go", "run", "./cmd/init-clickhouse"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - quiethire-network
+    volumes:
+      - ./config/clickhouse:/app/config/clickhouse:ro
+
+  init-typesense:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: builder
+    container_name: quiethire-init-typesense
+    working_dir: /app
+    environment:
+      - TYPESENSE_HOST=typesense
+      - TYPESENSE_PORT=8108
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+    command: ["go", "run", "./cmd/init-typesense"]
+    depends_on:
+      - typesense
+    networks:
+      - quiethire-network
 
   # Grafana - Observability Dashboard
   grafana:
@@ -191,13 +266,23 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-clickhouse}
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-quiethire}
       - TYPESENSE_HOST=${TYPESENSE_HOST:-typesense}
       - TYPESENSE_PORT=${TYPESENSE_PORT:-8108}
       - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
       - REDIS_HOST=${REDIS_HOST:-dragonfly}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - CRAWLER_SERVICE_URL=${CRAWLER_SERVICE_URL:-http://crawler-python:8000}
+      - PARSER_SERVICE_URL=${PARSER_SERVICE_URL:-http://parser:8000}
+      - OSINT_SERVICE_URL=${OSINT_SERVICE_URL:-http://osint-discovery:8000}
     depends_on:
       postgres:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
       typesense:
         condition: service_started

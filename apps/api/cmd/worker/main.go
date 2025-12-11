@@ -2,15 +2,18 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/itisrohit/quiethire/apps/api/internal/activities"
-	"github.com/itisrohit/quiethire/apps/api/internal/config"
 	"github.com/itisrohit/quiethire/apps/api/internal/workflows"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -21,18 +24,16 @@ func main() {
 		log.Println("No .env file found")
 	}
 
-	// Load configuration
-	cfg, err := config.Load()
-	if err != nil {
-		log.Printf("Warning: Failed to load full configuration: %v", err)
-		log.Println("Continuing with partial configuration...")
+	// Helper function to get environment variable with default
+	getEnv := func(key, defaultValue string) string {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+		return defaultValue
 	}
 
 	// Get Temporal configuration
-	temporalHost := os.Getenv("TEMPORAL_HOST")
-	if temporalHost == "" {
-		temporalHost = "localhost:7233"
-	}
+	temporalHost := getEnv("TEMPORAL_HOST", "localhost:7233")
 
 	// Create Temporal client
 	c, err := client.Dial(client.Options{
@@ -50,6 +51,51 @@ func main() {
 		Timeout: 60 * time.Second,
 	}
 
+	// Initialize ClickHouse connection using environment variables directly
+	var chConn clickhouse.Conn
+	clickhouseHost := getEnv("CLICKHOUSE_HOST", "localhost")
+	clickhousePort := getEnv("CLICKHOUSE_PORT", "9000")
+	clickhouseDB := getEnv("CLICKHOUSE_DB", "quiethire")
+	clickhouseUser := getEnv("CLICKHOUSE_USER", "default")
+	clickhousePassword := getEnv("CLICKHOUSE_PASSWORD", "")
+
+	chConn, err = clickhouse.Open(&clickhouse.Options{
+		Addr: []string{fmt.Sprintf("%s:%s", clickhouseHost, clickhousePort)},
+		Auth: clickhouse.Auth{
+			Database: clickhouseDB,
+			Username: clickhouseUser,
+			Password: clickhousePassword,
+		},
+	})
+	if err != nil {
+		log.Printf("Warning: Failed to connect to ClickHouse: %v", err)
+	} else {
+		log.Println("✅ Connected to ClickHouse")
+	}
+
+	// Initialize PostgreSQL connection using environment variables directly
+	var pgConn *sql.DB
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbUser := getEnv("DB_USER", "quiethire")
+	dbPassword := getEnv("DB_PASSWORD", "")
+	dbName := getEnv("DB_NAME", "quiethire")
+	dbSSLMode := getEnv("DB_SSL_MODE", "disable")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+
+	pgConn, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to PostgreSQL: %v", err)
+	} else {
+		if err := pgConn.Ping(); err != nil {
+			log.Printf("Warning: PostgreSQL ping failed: %v", err)
+		} else {
+			log.Println("✅ Connected to PostgreSQL")
+		}
+	}
+
 	// Create worker
 	w := worker.New(c, "job-crawl-queue", worker.Options{})
 
@@ -60,12 +106,18 @@ func main() {
 	w.RegisterWorkflow(workflows.ContinuousDiscoveryWorkflow)
 	w.RegisterWorkflow(workflows.GoogleDorkDiscoveryWorkflow)
 
+	// Get service URLs from environment or config
+	crawlerURL := getEnv("CRAWLER_SERVICE_URL", "http://localhost:8002")
+	parserURL := getEnv("PARSER_SERVICE_URL", "http://localhost:8001")
+	osintURL := getEnv("OSINT_SERVICE_URL", "http://localhost:8004")
+
 	// Initialize and register crawl activities
 	crawlActivities := &activities.CrawlActivities{
 		HTTPClient: httpClient,
-		CrawlerURL: cfg.Services.CrawlerURL,
-		ParserURL:  cfg.Services.ParserURL,
-		OSINTUrl:   cfg.Services.OSINTUrl,
+		CrawlerURL: crawlerURL,
+		ParserURL:  parserURL,
+		OSINTUrl:   osintURL,
+		ClickHouse: chConn,
 	}
 	w.RegisterActivity(crawlActivities.DiscoverJobURLs)
 	w.RegisterActivity(crawlActivities.CrawlJobBatch)
@@ -76,7 +128,8 @@ func main() {
 	// Initialize and register discovery activities
 	discoveryActivities := &activities.DiscoveryActivities{
 		HTTPClient: httpClient,
-		OSINTUrl:   cfg.Services.OSINTUrl,
+		OSINTUrl:   osintURL,
+		PostgreSQL: pgConn,
 	}
 	w.RegisterActivity(discoveryActivities.DiscoverCompaniesFromGitHub)
 	w.RegisterActivity(discoveryActivities.DiscoverCompaniesFromGoogleDorks)

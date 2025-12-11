@@ -267,9 +267,8 @@ func GoogleDorkDiscoveryWorkflow(ctx workflow.Context, keyword string) (*Discove
 	var allURLs []string
 	for _, future := range futures {
 		var urls []string
-		err := future.Get(ctx, &urls)
-		if err != nil {
-			logger.Error("Dork query failed", "error", err)
+		if getErr := future.Get(ctx, &urls); getErr != nil {
+			logger.Error("Dork query failed", "error", getErr)
 			continue
 		}
 		allURLs = append(allURLs, urls...)
@@ -288,8 +287,7 @@ func GoogleDorkDiscoveryWorkflow(ctx workflow.Context, keyword string) (*Discove
 	var discoveredPages []CareerPageInfo
 	for _, future := range detectionFutures {
 		var pageInfo CareerPageInfo
-		err := future.Get(ctx, &pageInfo)
-		if err != nil {
+		if getErr := future.Get(ctx, &pageInfo); getErr != nil {
 			continue
 		}
 		discoveredPages = append(discoveredPages, pageInfo)
