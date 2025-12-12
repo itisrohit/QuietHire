@@ -53,27 +53,27 @@ class ParsedJob(BaseModel):
 class JobParser:
     """Job posting parser using structured data extraction (JSON-LD, schema.org) and LLM fallback"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def extract_text_from_html(self, html: str) -> str:
         """Extract clean text content from HTML for LLM processing"""
         soup = BeautifulSoup(html, "html.parser")
-        
+
         # Remove script and style elements
         for script in soup(["script", "style", "nav", "header", "footer"]):
             script.decompose()
-        
+
         # Get text
         text = soup.get_text()
-        
+
         # Break into lines and remove leading/trailing space
         lines = (line.strip() for line in text.splitlines())
         # Break multi-headlines into a line each
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         # Drop blank lines
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-        
+        text = "\n".join(chunk for chunk in chunks if chunk)
+
         # Limit to first 8000 characters to avoid token limits
         return text[:8000]
 
@@ -81,94 +81,148 @@ class JobParser:
         """Check if title looks like a valid job posting"""
         if not title or len(title) < 3 or len(title) > 150:
             return False
-        
+
         # Filter out bad patterns
         bad_patterns = [
-            "logo", "jobs", "career", "culture", "benefit", "principle",
-            "your job", "find your", "we're hiring", "join", "everyone at",
-            "you're not", "saved jobs", "dream job"
+            "logo",
+            "jobs",
+            "career",
+            "culture",
+            "benefit",
+            "principle",
+            "your job",
+            "find your",
+            "we're hiring",
+            "join",
+            "everyone at",
+            "you're not",
+            "saved jobs",
+            "dream job",
         ]
         title_lower = title.lower()
-        
+
         for pattern in bad_patterns:
             if pattern in title_lower:
                 return False
-        
+
         # Must have some word characters (not just symbols/numbers)
-        if not re.search(r'[a-zA-Z]{3,}', title):
-            return False
-            
-        return True
-    
+        return bool(re.search(r"[a-zA-Z]{3,}", title))
+
     def _extract_company_from_url(self, url: str) -> str:
         """Extract company name from URL domain"""
         try:
             parsed = urlparse(url)
             domain = parsed.netloc or parsed.path
             # Remove common prefixes/suffixes
-            domain = domain.replace('www.', '').replace('careers.', '').replace('jobs.', '')
+            domain = (
+                domain.replace("www.", "").replace("careers.", "").replace("jobs.", "")
+            )
             # Get main domain name
-            parts = domain.split('.')
+            parts = domain.split(".")
             if len(parts) >= 2:
                 company = parts[0]
                 # Capitalize first letter
                 return company.capitalize()
             return domain.capitalize()
-        except:
+        except Exception:
             return "Unknown Company"
 
-    def extract_with_simple_heuristics(self, html: str, url: str) -> dict | None:
+    def extract_with_simple_heuristics(  # noqa: PLR0912
+        self, html: str, url: str
+    ) -> dict | None:
         """
         Extract job data using simple heuristics (for when LLM is not available).
         This is a fallback that works reasonably well for most job pages.
         """
         soup = BeautifulSoup(html, "html.parser")
-        
+
         # Try to find job title (prioritize h1 in main content)
         title = None
-        for selector in ["h1[class*='job']", "h1[class*='title']", "h1", "[class*='job-title']", "[class*='position-title']"]:
+        for selector in [
+            "h1[class*='job']",
+            "h1[class*='title']",
+            "h1",
+            "[class*='job-title']",
+            "[class*='position-title']",
+        ]:
             elem = soup.select_one(selector)
             if elem:
                 title = elem.get_text(strip=True)
                 if self._is_valid_job_title(title):
                     break
-        
+
         # If no valid title found, this is likely not a job page
         if not title or not self._is_valid_job_title(title):
             return None
-        
+
         # Try to find company name from multiple sources
         company = None
-        for selector in ["[class*='company-name']", "[class*='company']", "[class*='organization']", "[class*='employer']", "meta[property='og:site_name']"]:
+        for selector in [
+            "[class*='company-name']",
+            "[class*='company']",
+            "[class*='organization']",
+            "[class*='employer']",
+            "meta[property='og:site_name']",
+        ]:
             elem = soup.select_one(selector)
             if elem:
-                if elem.name == 'meta':
-                    company = elem.get('content', '')
+                if elem.name == "meta":
+                    company = elem.get("content", "")
                 else:
                     company = elem.get_text(strip=True)
-                if company and len(company) > 2 and len(company) < 100 and not any(x in company.lower() for x in ['logo', 'jobs', 'career']):
+                if (
+                    company
+                    and len(company) > 2
+                    and len(company) < 100
+                    and isinstance(company, str)
+                    and not any(
+                        x in company.lower() for x in ["logo", "jobs", "career"]
+                    )
+                ):
                     break
-        
+
         # Fallback: extract company from URL domain
         if not company:
             company = self._extract_company_from_url(url)
-        
+
         # Try to find location (more specific selectors)
         location = None
-        for selector in ["[class*='job-location']", "[class*='location']", "[data-test*='location']", "[class*='city']", "[class*='office']"]:
+        for selector in [
+            "[class*='job-location']",
+            "[class*='location']",
+            "[data-test*='location']",
+            "[class*='city']",
+            "[class*='office']",
+        ]:
             elem = soup.select_one(selector)
             if elem:
                 loc_text = elem.get_text(strip=True)
-                # Filter out noise
-                if loc_text and len(loc_text) > 2 and len(loc_text) < 100:
-                    # Check if it looks like a location (contains city/country keywords or has state/country codes)
-                    if re.search(r'\b(remote|hybrid|onsite|usa|uk|ca|us|europe|americas|asia)\b', loc_text.lower()) or ',' in loc_text:
-                        location = loc_text
-                        break
-        
+                # Filter out noise and check if it looks like a location
+                if (
+                    loc_text
+                    and len(loc_text) > 2
+                    and len(loc_text) < 100
+                    and (
+                        re.search(
+                            r"\b(remote|hybrid|onsite|usa|uk|ca|us|europe|americas|asia)\b",
+                            loc_text.lower(),
+                        )
+                        or "," in loc_text
+                    )
+                ):
+                    location = loc_text
+                    break
+
         # Try to find description (prioritize job-specific containers)
         description = None
-        for selector in ["[class*='job-description']", "[class*='description']", "[class*='job-content']", "[class*='content']", "main", "article"]:
+        for selector in [
+            "[class*='job-description']",
+            "[class*='description']",
+            "[class*='job-content']",
+            "[class*='content']",
+            "main",
+            "article",
+        ]:
             elem = soup.select_one(selector)
             if elem:
                 description = elem.get_text(strip=True)
@@ -176,11 +230,11 @@ class JobParser:
                     # Limit description length
                     description = description[:2000]
                     break
-        
+
         # Quality check: must have meaningful description
         if not description or len(description) < 100:
             return None
-        
+
         return {
             "title": title,
             "description": description,
@@ -202,6 +256,8 @@ class JobParser:
 
         for tag in json_ld_tags:
             try:
+                if tag.string is None:
+                    continue
                 data = json.loads(tag.string)
 
                 # Check if it's a JobPosting schema
@@ -252,7 +308,7 @@ class JobParser:
         job_type = schema.get("employmentType", "")
         if isinstance(job_type, list):
             job_type = job_type[0] if job_type else ""
-        
+
         return {
             "title": schema.get("title", ""),
             "description": schema.get("description", ""),
@@ -287,7 +343,7 @@ class JobParser:
                 requirements=[],
                 benefits=[],
             )
-        
+
         # Strategy 2: Try simple heuristics
         heuristic_data = self.extract_with_simple_heuristics(html, url)
         if heuristic_data:
@@ -303,11 +359,10 @@ class JobParser:
                 requirements=[],
                 benefits=[],
             )
-        
+
         # No data found
-        raise ValueError(
-            f"Could not extract job data from {url} using any available method"
-        )
+        error_msg = f"Could not extract job data from {url} using any available method"
+        raise ValueError(error_msg)
 
 
 # Initialize parser
@@ -335,8 +390,6 @@ async def parse_job_posting(request: ParseRequest) -> ParsedJob:
         logger.info("Parsing job from URL: %s", request.url)
         result = await job_parser.parse(request.html, request.url)
         logger.info("Successfully parsed job: %s at %s", result.title, result.company)
-        return result
-
     except ValueError as e:
         logger.warning("Could not parse job: %s", e)
         raise HTTPException(
@@ -347,6 +400,8 @@ async def parse_job_posting(request: ParseRequest) -> ParsedJob:
         raise HTTPException(
             status_code=500, detail=f"Failed to parse job posting: {e!s}"
         ) from e
+    else:
+        return result
 
 
 @app.post("/api/v1/extract-job-links", response_model=ExtractJobLinksResponse)
@@ -358,66 +413,89 @@ async def extract_job_links(request: ExtractJobLinksRequest) -> ExtractJobLinksR
     try:
         logger.info("Extracting job links from URL: %s", request.url)
         soup = BeautifulSoup(request.html, "html.parser")
-        base_url = f"{urlparse(request.url).scheme}://{urlparse(request.url).netloc}"
-        
+
         job_links = []
         seen_urls = set()
-        
+
         # Find all links
         for link in soup.find_all("a", href=True):
             href = link.get("href")
-            if not href:
+            if not href or not isinstance(href, str):
                 continue
-            
+
             # Make URL absolute
             absolute_url = urljoin(request.url, href)
-            
+
             # Skip if already seen
             if absolute_url in seen_urls:
                 continue
-            
+
             # Skip non-http links (mailto, tel, javascript, etc.)
             if not absolute_url.startswith(("http://", "https://")):
                 continue
-            
+
             # Skip external domains (only keep same domain)
             if urlparse(absolute_url).netloc != urlparse(request.url).netloc:
                 continue
-            
+
             # Heuristics to identify job posting URLs
             url_lower = absolute_url.lower()
             is_job_link = False
-            
+
             # Skip generic career pages
             skip_patterns = [
-                "/benefits", "/culture", "/life-at-", "/about", "/team",
-                "/principles", "/values", "/diversity", "/inclusion",
-                "/extraordinary", "/saved-jobs", "/all-jobs", "/accessibility",
-                "/interview-process", "/disciplines", "/university"
+                "/benefits",
+                "/culture",
+                "/life-at-",
+                "/about",
+                "/team",
+                "/principles",
+                "/values",
+                "/diversity",
+                "/inclusion",
+                "/extraordinary",
+                "/saved-jobs",
+                "/all-jobs",
+                "/accessibility",
+                "/interview-process",
+                "/disciplines",
+                "/university",
             ]
-            
+
             should_skip = any(pattern in url_lower for pattern in skip_patterns)
             if should_skip:
                 continue
-            
+
             # Check if URL contains job-related paths
             job_patterns = [
-                "/job/", "/jobs/", "/career/", "/careers/", 
-                "/position/", "/positions/", "/opening/", "/openings/",
-                "/vacancy/", "/vacancies/", "/role/", "/roles/"
+                "/job/",
+                "/jobs/",
+                "/career/",
+                "/careers/",
+                "/position/",
+                "/positions/",
+                "/opening/",
+                "/openings/",
+                "/vacancy/",
+                "/vacancies/",
+                "/role/",
+                "/roles/",
             ]
-            
+
             for pattern in job_patterns:
                 if pattern in url_lower:
                     # Avoid listing pages (they usually have few path segments)
                     path_parts = urlparse(absolute_url).path.strip("/").split("/")
                     # Job detail pages typically have ID or slug after /jobs/
                     # Must have either: UUID, numeric ID, or at least 3 path segments
-                    has_id = any(char.isdigit() for char in absolute_url) or len(path_parts) >= 3
+                    has_id = (
+                        any(char.isdigit() for char in absolute_url)
+                        or len(path_parts) >= 3
+                    )
                     if has_id:
                         is_job_link = True
                         break
-            
+
             if is_job_link:
                 # Extract title from link text
                 title = link.get_text(strip=True)
@@ -425,23 +503,15 @@ async def extract_job_links(request: ExtractJobLinksRequest) -> ExtractJobLinksR
                 if title and len(title) >= 5 and len(title) <= 200:
                     job_links.append(JobLink(url=absolute_url, title=title))
                     seen_urls.add(absolute_url)
-        
+
         logger.info("Found %d job links from %s", len(job_links), request.url)
         return ExtractJobLinksResponse(job_links=job_links, total_count=len(job_links))
-    
+
     except Exception as e:
         logger.exception("Error extracting job links")
         raise HTTPException(
             status_code=500, detail=f"Failed to extract job links: {e!s}"
         ) from e
-
-
-def main() -> None:
-    pass
-
-
-if __name__ == "__main__":
-    main()
 
 
 def main() -> None:

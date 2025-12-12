@@ -153,14 +153,16 @@ type CareerPageCrawlInput struct {
 // CareerPageCrawlResult defines the result of crawling a career page
 type CareerPageCrawlResult struct {
 	URL          string
+	ErrorMessage string
+	Duration     time.Duration
 	JobsFound    int
 	JobsStored   int
 	Success      bool
-	ErrorMessage string
-	Duration     time.Duration
 }
 
 // CareerPageCrawlWorkflow orchestrates crawling a single career page and extracting jobs
+//
+//nolint:gocyclo // workflow orchestrates multiple steps sequentially, complexity is inherent
 func CareerPageCrawlWorkflow(ctx workflow.Context, input CareerPageCrawlInput) (*CareerPageCrawlResult, error) {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Starting CareerPageCrawlWorkflow",
@@ -190,8 +192,8 @@ func CareerPageCrawlWorkflow(ctx workflow.Context, input CareerPageCrawlInput) (
 	var crawlResult struct {
 		URL     string
 		HTML    string
-		Success bool
 		Error   string
+		Success bool
 	}
 
 	crawlInput := map[string]interface{}{
@@ -259,8 +261,8 @@ func CareerPageCrawlWorkflow(ctx workflow.Context, input CareerPageCrawlInput) (
 		var jobPageCrawlResult struct {
 			URL     string
 			HTML    string
-			Success bool
 			Error   string
+			Success bool
 		}
 
 		jobCrawlInput := map[string]interface{}{

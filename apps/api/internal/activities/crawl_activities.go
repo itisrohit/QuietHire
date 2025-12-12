@@ -18,16 +18,15 @@ import (
 
 // CrawlActivities contains all crawling-related activities
 type CrawlActivities struct {
-	// HTTP client for calling microservices
+	// HTTP client for calling microservices (8 bytes - pointer)
 	HTTPClient *http.Client
+	// Database connections (8 bytes - interface with pointer)
+	ClickHouse clickhouse.Conn
 
-	// Service URLs
+	// Service URLs (16 bytes each - string header)
 	CrawlerURL string
 	ParserURL  string
 	OSINTUrl   string
-
-	// Database connections
-	ClickHouse clickhouse.Conn
 }
 
 // JobData represents a crawled job
@@ -152,8 +151,8 @@ func (a *CrawlActivities) crawlSingleJob(ctx context.Context, url, platform stri
 	var results []struct {
 		URL     string `json:"url"`
 		HTML    string `json:"html"`
-		Success bool   `json:"success"`
 		Error   string `json:"error"`
+		Success bool   `json:"success"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
@@ -367,9 +366,9 @@ type CrawlCareerPageInput struct {
 type CrawlCareerPageResult struct {
 	URL       string
 	HTML      string
+	Error     string
 	JobsFound int
 	Success   bool
-	Error     string
 }
 
 // CrawlCareerPage crawls a career page URL and returns HTML
@@ -413,8 +412,8 @@ func (a *CrawlActivities) CrawlCareerPage(ctx context.Context, input CrawlCareer
 	var results []struct {
 		URL     string `json:"url"`
 		HTML    string `json:"html"`
-		Success bool   `json:"success"`
 		Error   string `json:"error"`
+		Success bool   `json:"success"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {

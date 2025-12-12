@@ -1,4 +1,4 @@
-// Package main provides the main HTTP API server for QuietHire
+//nolint:gocyclo // main function coordinates multiple services, complexity is acceptable
 package main
 
 import (
@@ -15,8 +15,12 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/itisrohit/quiethire/apps/api/internal/config"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/typesense/typesense-go/typesense"
 	tsapi "github.com/typesense/typesense-go/typesense/api"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 func main() {
@@ -75,6 +79,49 @@ func main() {
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
+
+	// Prometheus metrics setup
+	reg := prometheus.NewRegistry()
+
+	// Register default Go metrics
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+
+	// Custom metrics
+	httpRequestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method", "path", "status"},
+	)
+	reg.MustRegister(httpRequestsTotal)
+
+	jobsTotal := prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "quiethire_jobs_total",
+			Help: "Total number of jobs in database",
+		},
+		func() float64 {
+			if chConn == nil {
+				return 0
+			}
+			var count uint64
+			err := chConn.QueryRow(context.Background(), "SELECT count() FROM jobs").Scan(&count)
+			if err != nil {
+				return 0
+			}
+			return float64(count)
+		},
+	)
+	reg.MustRegister(jobsTotal)
+
+	// Metrics endpoint
+	prometheusHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	app.Get("/metrics", func(c *fiber.Ctx) error {
+		fasthttpadaptor.NewFastHTTPHandler(prometheusHandler)(c.Context())
+		return nil
+	})
 
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -140,26 +187,26 @@ func main() {
 		}
 
 		var job struct {
-			ID                 string   `ch:"id"`
-			Title              string   `ch:"title"`
-			Company            string   `ch:"company"`
-			Description        string   `ch:"description"`
-			Location           string   `ch:"location"`
-			Remote             uint8    `ch:"remote"`
 			SalaryMin          *int32   `ch:"salary_min"`
-			SalaryMax          *int32   `ch:"salary_max"`
-			Currency           *string  `ch:"currency"`
-			JobType            string   `ch:"job_type"`
-			ExperienceLevel    *string  `ch:"experience_level"`
-			RealScore          int32    `ch:"real_score"`
-			HiringManagerName  *string  `ch:"hiring_manager_name"`
 			HiringManagerEmail *string  `ch:"hiring_manager_email"`
-			SourceURL          string   `ch:"source_url"`
+			HiringManagerName  *string  `ch:"hiring_manager_name"`
+			ExperienceLevel    *string  `ch:"experience_level"`
+			Currency           *string  `ch:"currency"`
+			SalaryMax          *int32   `ch:"salary_max"`
 			SourcePlatform     string   `ch:"source_platform"`
-			Tags               []string `ch:"tags"`
-			PostedAt           string   `ch:"posted_at"`
-			UpdatedAt          string   `ch:"updated_at"`
+			Title              string   `ch:"title"`
+			Location           string   `ch:"location"`
+			JobType            string   `ch:"job_type"`
+			Description        string   `ch:"description"`
 			CrawledAt          string   `ch:"crawled_at"`
+			Company            string   `ch:"company"`
+			UpdatedAt          string   `ch:"updated_at"`
+			SourceURL          string   `ch:"source_url"`
+			ID                 string   `ch:"id"`
+			PostedAt           string   `ch:"posted_at"`
+			Tags               []string `ch:"tags"`
+			RealScore          int32    `ch:"real_score"`
+			Remote             uint8    `ch:"remote"`
 		}
 
 		err := chConn.QueryRow(context.Background(), `
@@ -291,11 +338,11 @@ func main() {
 		}
 
 		var stats struct {
+			LastCrawledAt string  `ch:"last_crawled_at"`
 			TotalJobs     uint64  `ch:"total_jobs"`
 			ActiveJobs    uint64  `ch:"active_jobs"`
 			Companies     uint64  `ch:"companies"`
 			AvgRealScore  float64 `ch:"avg_real_score"`
-			LastCrawledAt string  `ch:"last_crawled_at"`
 		}
 
 		err := chConn.QueryRow(context.Background(), `

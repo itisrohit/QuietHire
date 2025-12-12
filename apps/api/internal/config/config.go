@@ -9,12 +9,12 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	App        AppConfig
-	Database   DatabaseConfig
 	ClickHouse ClickHouseConfig
+	Database   DatabaseConfig
 	Typesense  TypesenseConfig
-	Redis      RedisConfig
 	Services   ServicesConfig
+	App        AppConfig
+	Redis      RedisConfig
 }
 
 // AppConfig contains application-level settings
@@ -38,10 +38,10 @@ type DatabaseConfig struct {
 // ClickHouseConfig contains ClickHouse database settings
 type ClickHouseConfig struct {
 	Host     string
-	Port     int
 	Database string
 	User     string
 	Password string
+	Port     int
 }
 
 // TypesenseConfig contains Typesense search engine settings

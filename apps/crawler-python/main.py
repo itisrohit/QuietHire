@@ -5,11 +5,12 @@ Uses undetected-playwright for anti-detection crawling of job sites
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from playwright.async_api import Browser, Page, async_playwright
+from playwright.async_api import Browser, Page, ProxySettings, async_playwright
 from pydantic import BaseModel, field_validator
 
 # Configure logging
@@ -34,7 +35,8 @@ class CrawlRequest(BaseModel):
     def validate_url(cls, v: str) -> str:
         """Validate URL format"""
         if not v.startswith(("http://", "https://")):
-            raise ValueError("URL must start with http:// or https://")
+            error_msg = "URL must start with http:// or https://"
+            raise ValueError(error_msg)
         return v
 
 
@@ -47,9 +49,9 @@ class CrawlResponse(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Initialize and cleanup browser on startup/shutdown"""
-    global browser
+    global browser  # noqa: PLW0603
     logger.info("Starting browser...")
 
     try:
@@ -91,12 +93,12 @@ async def apply_stealth(page: Page) -> None:
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined
         });
-        
+
         // Override chrome detection
         window.chrome = {
             runtime: {}
         };
-        
+
         // Override permissions
         const originalQuery = window.navigator.permissions.query;
         window.navigator.permissions.query = (parameters) => (
@@ -104,12 +106,12 @@ async def apply_stealth(page: Page) -> None:
                 Promise.resolve({ state: Notification.permission }) :
                 originalQuery(parameters)
         );
-        
+
         // Add plugins
         Object.defineProperty(navigator, 'plugins', {
             get: () => [1, 2, 3, 4, 5]
         });
-        
+
         // Add languages
         Object.defineProperty(navigator, 'languages', {
             get: () => ['en-US', 'en']
@@ -118,7 +120,7 @@ async def apply_stealth(page: Page) -> None:
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict[str, str | bool]:
     """Health check endpoint"""
     return {
         "status": "healthy",
@@ -128,7 +130,7 @@ async def health_check():
 
 
 @app.post("/crawl", response_model=CrawlResponse)
-async def crawl_url(request: CrawlRequest):
+async def crawl_url(request: CrawlRequest) -> CrawlResponse:
     """
     Crawl a URL with stealth techniques
 
@@ -145,20 +147,20 @@ async def crawl_url(request: CrawlRequest):
     page = None
 
     try:
-        logger.info(f"Crawling URL: {request.url}")
+        logger.info("Crawling URL: %s", request.url)
 
         # Create browser context with proxy if provided
-        context_options = {
-            "viewport": {"width": 1920, "height": 1080},
-            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "locale": "en-US",
-            "timezone_id": "America/New_York",
-        }
-
+        proxy: ProxySettings | None = None
         if request.proxy_url:
-            context_options["proxy"] = {"server": request.proxy_url}
+            proxy = {"server": request.proxy_url}
 
-        context = await browser.new_context(**context_options)
+        context = await browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="en-US",
+            timezone_id="America/New_York",
+            proxy=proxy,
+        )
         page = await context.new_page()
 
         # Apply stealth if requested
@@ -171,7 +173,7 @@ async def crawl_url(request: CrawlRequest):
         )
 
         if not response:
-            raise HTTPException(status_code=500, detail="No response from page")
+            raise HTTPException(status_code=500, detail="No response from page")  # noqa: TRY301
 
         # Wait for specific selector if provided
         if request.wait_for_selector:
@@ -185,7 +187,7 @@ async def crawl_url(request: CrawlRequest):
         html = await page.content()
         status = response.status
 
-        logger.info(f"Successfully crawled {request.url} - Status: {status}")
+        logger.info("Successfully crawled %s - Status: %d", request.url, status)
 
         return CrawlResponse(
             url=str(request.url),
@@ -196,7 +198,7 @@ async def crawl_url(request: CrawlRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error crawling {request.url}: {e!s}")
+        logger.exception("Error crawling %s", request.url)
         return CrawlResponse(
             url=str(request.url), html="", status=500, success=False, error=str(e)
         )
@@ -209,7 +211,7 @@ async def crawl_url(request: CrawlRequest):
 
 
 @app.post("/crawl-batch")
-async def crawl_batch(urls: list[str], use_stealth: bool = True):
+async def crawl_batch(urls: list[str], use_stealth: bool = True) -> list[CrawlResponse]:
     """
     Crawl multiple URLs in parallel
 
@@ -228,7 +230,7 @@ async def crawl_batch(urls: list[str], use_stealth: bool = True):
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Convert exceptions to error responses
-    responses = []
+    responses: list[CrawlResponse] = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
             responses.append(
@@ -236,13 +238,13 @@ async def crawl_batch(urls: list[str], use_stealth: bool = True):
                     url=urls[i], html="", status=500, success=False, error=str(result)
                 )
             )
-        else:
+        elif isinstance(result, CrawlResponse):
             responses.append(result)
 
     return responses
 
 
-def main():
+def main() -> None:
     """Run the FastAPI application"""
     uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info", reload=False)
 

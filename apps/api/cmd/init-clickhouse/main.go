@@ -67,8 +67,8 @@ func main() {
 	}
 	log.Printf("✅ Database '%s' ready", dbName)
 
-	// Read and execute schema
-	schemaPath := "../../config/clickhouse/schema.sql"
+	// Read and execute schema (Docker path)
+	schemaPath := "/app/config/clickhouse/schema.sql"
 	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
 		log.Fatalf("Failed to read schema file: %v", err)

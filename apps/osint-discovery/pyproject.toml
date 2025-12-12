@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "serpapi>=0.1.5",
     "uvicorn>=0.38.0",
+    "theHarvester @ git+https://github.com/laramies/theHarvester.git",
 ]
 
 [dependency-groups]

@@ -30,6 +30,7 @@ ENV/
 *.egg-info/
 dist/
 build/
+uv.lock
 
 # IDEs
 .vscode/
@@ -50,6 +51,7 @@ Thumbs.db
 *.sqlite
 data/
 # Compiled binaries
+bin/
 apps/*/api
 apps/*/worker
 apps/*/crawler-go
@@ -57,3 +59,7 @@ apps/*/proxy-manager
 **/cmd/*/main
 apps/api/seed-companies
 apps/api/trigger-discovery
+apps/api/index-jobs
+*-linux
+*-darwin
+*-windows.exe

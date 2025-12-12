@@ -13,14 +13,14 @@ import (
 	"log"
 	"net/http"
 
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 // DiscoveryActivities contains all OSINT discovery-related activities
 type DiscoveryActivities struct {
-	HTTPClient *http.Client
-	OSINTUrl   string
-	PostgreSQL *sql.DB
+	HTTPClient *http.Client // 8 bytes - pointer
+	PostgreSQL *sql.DB      // 8 bytes - pointer
+	OSINTUrl   string       // 16 bytes - string header
 }
 
 // DiscoverCompaniesFromGitHub discovers companies from GitHub
@@ -181,7 +181,7 @@ func (a *DiscoveryActivities) DiscoverCompaniesFromGoogleDorks(ctx context.Conte
 }
 
 // AddCompanyManually adds a single company manually
-func (a *DiscoveryActivities) AddCompanyManually(ctx context.Context, domain string) ([]CompanyInfo, error) {
+func (a *DiscoveryActivities) AddCompanyManually(_ context.Context, domain string) ([]CompanyInfo, error) {
 	log.Printf("Adding company manually: %s", domain)
 
 	// Simply return the domain as a company
@@ -290,7 +290,11 @@ func (a *DiscoveryActivities) EnumerateSubdomains(ctx context.Context, domain st
 	}
 
 	var result struct {
-		Subdomains []string `json:"subdomains"`
+		Subdomains []struct {
+			Subdomain    string `json:"subdomain"`
+			Method       string `json:"method"`
+			IsJobRelated bool   `json:"is_job_related"`
+		} `json:"subdomains"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -298,15 +302,25 @@ func (a *DiscoveryActivities) EnumerateSubdomains(ctx context.Context, domain st
 	}
 
 	// Convert subdomains to potential career page URLs
-	pages := make([]CareerPageInfo, len(result.Subdomains))
-	for i, subdomain := range result.Subdomains {
-		pages[i] = CareerPageInfo{
+	pages := make([]CareerPageInfo, 0, len(result.Subdomains))
+	for _, subdomainInfo := range result.Subdomains {
+		subdomain := subdomainInfo.Subdomain
+
+		// Prioritize job-related subdomains
+		confidence := 0.5
+		priority := 2
+		if subdomainInfo.IsJobRelated {
+			confidence = 0.8
+			priority = 1
+		}
+
+		pages = append(pages, CareerPageInfo{
 			URL:        "https://" + subdomain,
 			Domain:     domain,
 			PageType:   "subdomain",
-			Confidence: 0.5,
-			Priority:   2,
-		}
+			Confidence: confidence,
+			Priority:   priority,
+		})
 	}
 
 	log.Printf("Found %d subdomains for %s", len(pages), domain)
@@ -348,9 +362,9 @@ func (a *DiscoveryActivities) DetectATS(ctx context.Context, url string) (ATSInf
 	}
 
 	var result struct {
-		IsATS      bool    `json:"is_ats"`
 		Platform   string  `json:"platform"`
 		Confidence float64 `json:"confidence"`
+		IsATS      bool    `json:"is_ats"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -499,7 +513,7 @@ func (a *DiscoveryActivities) DetectATSAndExtractDomain(ctx context.Context, url
 	}, nil
 }
 
-// Data structures for discovery activities
+// CompanyInfo contains basic information about a discovered company.
 type CompanyInfo struct {
 	Name        string
 	Domain      string
@@ -507,18 +521,20 @@ type CompanyInfo struct {
 	Source      string
 }
 
+// CareerPageInfo contains information about a discovered career page.
 type CareerPageInfo struct {
 	URL         string
 	Domain      string
 	PageType    string
-	Confidence  float64
 	ATSPlatform string
+	Confidence  float64
 	Priority    int
 }
 
+// ATSInfo contains information about a detected ATS platform.
 type ATSInfo struct {
 	URL        string
-	IsATS      bool
 	Platform   string
 	Confidence float64
+	IsATS      bool
 }

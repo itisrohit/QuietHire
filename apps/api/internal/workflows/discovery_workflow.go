@@ -17,15 +17,17 @@ type DiscoveryInput struct {
 
 // DiscoveryResult defines the result of a discovery workflow
 type DiscoveryResult struct {
-	CompaniesFound   int
-	CareerPagesFound int
-	ATSPlatforms     map[string]int // platform -> count
-	Duration         time.Duration
-	TotalURLsQueued  int
+	ATSPlatforms     map[string]int // 8 bytes - pointer (map header)
+	Duration         time.Duration  // 8 bytes - int64
+	CompaniesFound   int            // 8 bytes - int
+	CareerPagesFound int            // 8 bytes - int
+	TotalURLsQueued  int            // 8 bytes - int
 }
 
 // CompanyDiscoveryWorkflow discovers companies and their career pages
 // This is the main OSINT discovery workflow
+//
+//nolint:gocyclo // workflow orchestrates complex discovery pipeline, complexity is acceptable
 func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*DiscoveryResult, error) {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Starting CompanyDiscoveryWorkflow", "query", input.Query, "sources", input.Sources)
@@ -80,7 +82,7 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 	logger.Info("Total companies discovered", "count", result.CompaniesFound)
 
 	// Step 2: For each company, discover career pages (parallel processing)
-	var careerPageFutures []workflow.Future
+	careerPageFutures := make([]workflow.Future, 0, len(allCompanies)*2)
 	for _, company := range allCompanies {
 		future := workflow.ExecuteActivity(ctx, "DiscoverCareerPages", company.Domain, company.Name)
 		careerPageFutures = append(careerPageFutures, future)
@@ -106,7 +108,7 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 	logger.Info("Total career pages discovered", "count", result.CareerPagesFound)
 
 	// Step 3: Detect ATS platforms for each career page (parallel)
-	var atsDetectionFutures []workflow.Future
+	atsDetectionFutures := make([]workflow.Future, 0, len(allCareerPages))
 	for _, page := range allCareerPages {
 		future := workflow.ExecuteActivity(ctx, "DetectATS", page.URL)
 		atsDetectionFutures = append(atsDetectionFutures, future)
@@ -127,8 +129,7 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 	}
 
 	// Step 4: Queue all discovered URLs for crawling (store in DB)
-	var queueFuture workflow.Future
-	queueFuture = workflow.ExecuteActivity(ctx, "QueueURLsForCrawling", allCareerPages)
+	queueFuture := workflow.ExecuteActivity(ctx, "QueueURLsForCrawling", allCareerPages)
 
 	var queued int
 	err := queueFuture.Get(ctx, &queued)
@@ -309,7 +310,7 @@ func GoogleDorkDiscoveryWorkflow(ctx workflow.Context, keyword string) (*Discove
 	logger.Info("Generated dork queries", "count", len(dorkQueries))
 
 	// Step 2: Execute each dork query in parallel
-	var futures []workflow.Future
+	futures := make([]workflow.Future, 0, len(dorkQueries))
 	for _, query := range dorkQueries {
 		future := workflow.ExecuteActivity(ctx, "ExecuteDorkQuery", query, 100)
 		futures = append(futures, future)
@@ -329,14 +330,14 @@ func GoogleDorkDiscoveryWorkflow(ctx workflow.Context, keyword string) (*Discove
 	logger.Info("Total URLs found from dorks", "count", len(allURLs))
 
 	// Step 4: Detect ATS and extract domains
-	var detectionFutures []workflow.Future
+	detectionFutures := make([]workflow.Future, 0, len(allURLs))
 	for _, url := range allURLs {
 		future := workflow.ExecuteActivity(ctx, "DetectATSAndExtractDomain", url)
 		detectionFutures = append(detectionFutures, future)
 	}
 
 	// Step 5: Collect detection results
-	var discoveredPages []CareerPageInfo
+	discoveredPages := make([]CareerPageInfo, 0, len(allURLs))
 	for _, future := range detectionFutures {
 		var pageInfo CareerPageInfo
 		if getErr := future.Get(ctx, &pageInfo); getErr != nil {
@@ -370,7 +371,7 @@ func GoogleDorkDiscoveryWorkflow(ctx workflow.Context, keyword string) (*Discove
 	return result, nil
 }
 
-// Data structures used by discovery workflows
+// CompanyInfo contains basic information about a discovered company.
 type CompanyInfo struct {
 	Name        string
 	Domain      string
@@ -378,18 +379,20 @@ type CompanyInfo struct {
 	Source      string
 }
 
+// CareerPageInfo contains information about a discovered career page.
 type CareerPageInfo struct {
 	URL         string
 	Domain      string
 	PageType    string
-	Confidence  float64
 	ATSPlatform string
+	Confidence  float64
 	Priority    int
 }
 
+// ATSInfo contains information about a detected ATS platform.
 type ATSInfo struct {
 	URL        string
-	IsATS      bool
 	Platform   string
 	Confidence float64
+	IsATS      bool
 }

@@ -42,7 +42,9 @@ lint-go: ## Lint Go code
 
 lint-python: ## Lint Python code
 	@echo "$(YELLOW)Linting Python code...$(NC)"
-	@ruff check apps/parser apps/crawler-python apps/osint-discovery || (echo "$(RED)✗ Python linting failed$(NC)" && exit 1)
+	@cd apps/parser && uv run ruff check . || (echo "$(RED)✗ Python linting failed in parser$(NC)" && exit 1)
+	@cd apps/crawler-python && uv run ruff check . || (echo "$(RED)✗ Python linting failed in crawler$(NC)" && exit 1)
+	@cd apps/osint-discovery && uv run ruff check . || (echo "$(RED)✗ Python linting failed in osint$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Python linting passed$(NC)"
 
 type-check: type-check-go type-check-python ## Run all type checkers
@@ -55,9 +57,9 @@ type-check-go: ## Type check Go code (via golangci-lint)
 
 type-check-python: ## Type check Python code with mypy
 	@echo "$(YELLOW)Type checking Python code...$(NC)"
-	@mypy apps/parser/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
-	@mypy apps/crawler-python/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
-	@mypy apps/osint-discovery/main.py --config-file pyproject.toml || (echo "$(RED)✗ Python type checking failed$(NC)" && exit 1)
+	@cd apps/parser && uv run mypy main.py --config-file ../../pyproject.toml || (echo "$(RED)✗ Python type checking failed in parser$(NC)" && exit 1)
+	@cd apps/crawler-python && uv run mypy main.py --config-file ../../pyproject.toml || (echo "$(RED)✗ Python type checking failed in crawler$(NC)" && exit 1)
+	@cd apps/osint-discovery && uv run mypy main.py --config-file ../../pyproject.toml || (echo "$(RED)✗ Python type checking failed in osint$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Python type checking passed$(NC)"
 
 format: format-go format-python ## Format all code
@@ -70,12 +72,16 @@ format-go: ## Format Go code
 
 format-python: ## Format Python code
 	@echo "$(YELLOW)Formatting Python code...$(NC)"
-	@ruff format apps/parser apps/crawler-python apps/osint-discovery
+	@cd apps/parser && uv run ruff format .
+	@cd apps/crawler-python && uv run ruff format .
+	@cd apps/osint-discovery && uv run ruff format .
 	@echo "$(GREEN)✓ Python code formatted$(NC)"
 
 fix: ## Auto-fix linting issues where possible
 	@echo "$(YELLOW)Auto-fixing issues...$(NC)"
-	@ruff check --fix apps/parser apps/crawler-python apps/osint-discovery
+	@cd apps/parser && uv run ruff check --fix .
+	@cd apps/crawler-python && uv run ruff check --fix .
+	@cd apps/osint-discovery && uv run ruff check --fix .
 	@$(MAKE) format
 	@echo "$(GREEN)✓ Auto-fix complete$(NC)"
 

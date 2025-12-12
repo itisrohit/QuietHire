@@ -1,11 +1,18 @@
 import asyncio
 import logging
 import os
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+# Optional theHarvester imports
+try:
+    from theHarvester.discovery import duckduckgosearch, hackertarget
+except ImportError:
+    duckduckgosearch = None
+    hackertarget = None
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +61,7 @@ class CareerPage(BaseModel):
     confidence: float  # 0.0 to 1.0
     ats_platform: str | None = None
     discovered_via: str  # subdomain, google, sitemap, etc.
+    emails: list[str] = Field(default_factory=list)  # Harvested emails (recruiters, HR)
 
 
 class CareerPageResponse(BaseModel):
@@ -77,8 +85,8 @@ class ATSDetectionResponse(BaseModel):
 class SubdomainEnumerationRequest(BaseModel):
     domain: str
     methods: list[str] = Field(
-        ["dns", "crt"],
-        description="Methods to use: dns, crt (Certificate Transparency)",
+        ["dns", "crt", "theharvester"],
+        description="Methods to use: dns, crt (Certificate Transparency), theharvester",
     )
 
 
@@ -120,7 +128,7 @@ class GoogleDorkResponse(BaseModel):
 class CompanyFinder:
     """Discover companies from various sources"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.github_token = os.getenv("GITHUB_TOKEN")
         self.crunchbase_key = os.getenv("CRUNCHBASE_API_KEY")
 
@@ -129,15 +137,16 @@ class CompanyFinder:
         Find companies by searching GitHub organizations and repositories.
         Looks for orgs with career pages, HIRING.md, or job-related repos.
         """
-        companies = []
+        companies: list[Company] = []
 
         if not self.github_token:
             logger.warning("GITHUB_TOKEN not set, skipping GitHub discovery")
             return companies
 
         headers = {
-            "Authorization": f"token {self.github_token}",
-            "Accept": "application/vnd.github.v3+json",
+            "Authorization": f"Bearer {self.github_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
         }
 
         async with httpx.AsyncClient() as client:
@@ -184,19 +193,19 @@ class CompanyFinder:
 
                     await asyncio.sleep(0.5)  # Rate limiting
 
-                except Exception as e:
-                    logger.error("Error searching GitHub: %s", e)
+                except Exception:
+                    logger.exception("Error searching GitHub")
 
         return companies[:limit]
 
     async def discover_from_crunchbase(
-        self, query: str, limit: int = 100
+        self, _query: str, _limit: int = 100
     ) -> list[Company]:
         """
         Find companies from Crunchbase API.
         Requires CRUNCHBASE_API_KEY.
         """
-        companies = []
+        companies: list[Company] = []
 
         if not self.crunchbase_key:
             logger.warning("CRUNCHBASE_API_KEY not set, skipping Crunchbase discovery")
@@ -225,7 +234,7 @@ class CompanyFinder:
 class CareerPageFinder:
     """Find career pages for companies"""
 
-    JOB_KEYWORDS = [
+    JOB_KEYWORDS: ClassVar[list[str]] = [
         "careers",
         "jobs",
         "hiring",
@@ -238,7 +247,7 @@ class CareerPageFinder:
     ]
 
     async def find_career_pages(
-        self, domain: str, company_name: str | None = None
+        self, domain: str, _company_name: str | None = None
     ) -> list[CareerPage]:
         """
         Find career pages for a given domain using multiple techniques:
@@ -246,6 +255,7 @@ class CareerPageFinder:
         2. Common career page paths (/careers, /jobs, etc.)
         3. Sitemap analysis
         4. Google dorking
+        5. Email harvesting (theHarvester)
         """
         pages = []
 
@@ -256,6 +266,13 @@ class CareerPageFinder:
         # 2. Check common career page paths
         path_pages = await self._check_career_paths(domain)
         pages.extend(path_pages)
+
+        # 3. Harvest emails for the domain (async, don't block page discovery)
+        emails = await self._harvest_emails(domain)
+
+        # Add emails to all discovered pages
+        for page in pages:
+            page.emails = emails
 
         return pages
 
@@ -329,11 +346,57 @@ class CareerPageFinder:
 
         return pages
 
+    async def _harvest_emails(self, domain: str) -> list[str]:
+        """
+        Harvest emails for domain using theHarvester with 100% FREE sources.
+        Uses DuckDuckGo search - no API keys required.
+
+        Note: Email discovery from public sources is limited. Consider checking:
+        - Company career pages (often list recruiting@company.com)
+        - LinkedIn company pages
+        - GitHub organization members
+        """
+        emails = set()
+
+        if duckduckgosearch is None:
+            logger.warning(
+                "theHarvester not installed. Install with: pip install theHarvester"
+            )
+            return []
+
+        try:
+            logger.info(
+                "Harvesting emails for %s using theHarvester (free sources)", domain
+            )
+
+            # DuckDuckGo search (100% free, no API key)
+            try:
+                searcher = duckduckgosearch.SearchDuckDuckGo(domain, limit=50)
+                await searcher.process()
+
+                found_emails = await searcher.get_emails()
+                logger.info("DuckDuckGo found %d emails", len(found_emails))
+
+                for raw_email in found_emails:
+                    cleaned_email = raw_email.strip().lower()
+                    # Include all emails from domain
+                    if cleaned_email and domain.lower() in cleaned_email:
+                        emails.add(cleaned_email)
+            except Exception:
+                logger.exception("DuckDuckGo email search failed for %s", domain)
+
+        except Exception:
+            logger.exception("Error harvesting emails for %s", domain)
+
+        email_list = sorted(emails)
+        logger.info("Harvested %d total emails for %s", len(email_list), domain)
+        return email_list
+
 
 class ATSDetector:
     """Detect Applicant Tracking Systems (ATS) platforms"""
 
-    ATS_PATTERNS = {
+    ATS_PATTERNS: ClassVar[dict[str, dict[str, Any]]] = {
         "greenhouse": {
             "domains": ["greenhouse.io", "boards.greenhouse.io"],
             "url_patterns": ["/jobs/"],
@@ -423,8 +486,8 @@ class ATSDetector:
                                 confidence=0.6,
                                 job_listing_urls=[],
                             )
-        except Exception as e:
-            logger.error("Error fetching URL for ATS detection: %s", e)
+        except Exception:
+            logger.exception("Error fetching URL for ATS detection")
 
         return ATSDetectionResponse(
             url=url, is_ats=False, platform=None, confidence=0.0, job_listing_urls=[]
@@ -434,7 +497,7 @@ class ATSDetector:
 class SubdomainEnumerator:
     """Enumerate subdomains for job discovery"""
 
-    JOB_RELATED_KEYWORDS = [
+    JOB_RELATED_KEYWORDS: ClassVar[list[str]] = [
         "careers",
         "jobs",
         "hiring",
@@ -454,6 +517,7 @@ class SubdomainEnumerator:
         Enumerate subdomains using multiple methods:
         - dns: DNS enumeration
         - crt: Certificate Transparency logs
+        - theharvester: theHarvester tool (DNSDumpster, VirusTotal, etc.)
         """
         subdomains = []
 
@@ -464,6 +528,10 @@ class SubdomainEnumerator:
         if "dns" in methods:
             dns_subs = await self._enumerate_dns(domain)
             subdomains.extend(dns_subs)
+
+        if "theharvester" in methods:
+            harvester_subs = await self._enumerate_theharvester(domain)
+            subdomains.extend(harvester_subs)
 
         # Deduplicate
         seen = set()
@@ -492,22 +560,22 @@ class SubdomainEnumerator:
                     for entry in data:
                         name_value = entry.get("name_value", "")
                         # Handle wildcard and multiple subdomains
-                        for subdomain in name_value.split("\n"):
-                            subdomain = subdomain.strip().replace("*.", "")
-                            if subdomain and subdomain.endswith(domain):
+                        for raw_sub in name_value.split("\n"):
+                            cleaned_sub = raw_sub.strip().replace("*.", "")
+                            if cleaned_sub and cleaned_sub.endswith(domain):
                                 is_job_related = any(
-                                    kw in subdomain.lower()
+                                    kw in cleaned_sub.lower()
                                     for kw in self.JOB_RELATED_KEYWORDS
                                 )
                                 subdomains.append(
                                     Subdomain(
-                                        subdomain=subdomain,
+                                        subdomain=cleaned_sub,
                                         method="crt",
                                         is_job_related=is_job_related,
                                     )
                                 )
-        except Exception as e:
-            logger.error("Error enumerating crt.sh for %s: %s", domain, e)
+        except Exception:
+            logger.exception("Error enumerating crt.sh for %s", domain)
 
         return subdomains
 
@@ -537,11 +605,58 @@ class SubdomainEnumerator:
 
         return subdomains
 
+    async def _enumerate_theharvester(self, domain: str) -> list[Subdomain]:
+        """
+        Use theHarvester to find subdomains from 100% FREE OSINT sources.
+        No API keys required - uses only HackerTarget (free, unlimited).
+        """
+        subdomains = []
+
+        if hackertarget is None:
+            logger.warning(
+                "theHarvester not installed. Install with: pip install theHarvester"
+            )
+            return []
+
+        try:
+            logger.info("Using theHarvester to enumerate subdomains for %s", domain)
+
+            # HackerTarget (100% free, no API key, no rate limits)
+            try:
+                searcher = hackertarget.SearchHackerTarget(domain)
+                await searcher.process()
+
+                hostnames = await searcher.get_hostnames()
+                logger.info("HackerTarget found %d hostnames", len(hostnames))
+
+                for raw_host in hostnames:
+                    cleaned_host = raw_host.strip().lower()
+                    if cleaned_host and domain in cleaned_host:
+                        is_job_related = any(
+                            kw in cleaned_host.lower()
+                            for kw in self.JOB_RELATED_KEYWORDS
+                        )
+                        subdomains.append(
+                            Subdomain(
+                                subdomain=cleaned_host,
+                                method="theharvester_hackertarget",
+                                is_job_related=is_job_related,
+                            )
+                        )
+            except Exception:
+                logger.exception("HackerTarget failed for %s", domain)
+
+        except Exception:
+            logger.exception("Error using theHarvester for %s", domain)
+
+        logger.info("theHarvester found %d total subdomains", len(subdomains))
+        return subdomains
+
 
 class GoogleDorker:
     """Execute Google dork queries for job discovery"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.serpapi_key = os.getenv("SERPAPI_API_KEY")
 
     async def execute_dork(
@@ -583,8 +698,8 @@ class GoogleDorker:
                                 rank=i + 1,
                             )
                         )
-        except Exception as e:
-            logger.error("Error executing dork query: %s", e)
+        except Exception:
+            logger.exception("Error executing dork query")
 
         return results
 
@@ -653,7 +768,7 @@ async def discover_companies(
         elif request.source == "manual":
             companies = await company_finder.discover_manual(request.query)
         else:
-            raise HTTPException(
+            raise HTTPException(  # noqa: TRY301
                 status_code=400,
                 detail=f"Unknown source: {request.source}. Supported: github, crunchbase, manual",
             )
@@ -702,8 +817,7 @@ async def detect_ats(request: ATSDetectionRequest) -> ATSDetectionResponse:
     try:
         logger.info("Detecting ATS for URL: %s", request.url)
 
-        result = await ats_detector.detect_ats(request.url)
-        return result
+        return await ats_detector.detect_ats(request.url)
 
     except Exception as e:
         logger.exception("Error detecting ATS")
@@ -759,12 +873,12 @@ async def execute_google_dork(request: GoogleDorkRequest) -> GoogleDorkResponse:
 
 
 @app.get("/api/v1/dorks/templates")
-async def get_dork_templates(keyword: str | None = None) -> dict[str, list[str]]:
+async def get_dork_templates(keyword: str | None = None) -> dict[str, list[str] | str]:
     """
     Get pre-built Google dork query templates for job discovery.
     """
     dorks = google_dorker.generate_job_dorks(keyword)
-    return {"dorks": dorks, "keyword": keyword}
+    return {"dorks": dorks, "keyword": keyword or ""}
 
 
 def main() -> None:

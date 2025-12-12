@@ -1,3 +1,4 @@
+// Package main provides a CLI tool to trigger company discovery workflows.
 package main
 
 import (

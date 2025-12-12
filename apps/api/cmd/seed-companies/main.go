@@ -1,3 +1,4 @@
+// Package main provides a CLI tool to seed initial companies into the database.
 package main
 
 import (
@@ -101,11 +102,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to PostgreSQL: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("⚠️  Failed to close database: %v", closeErr)
+		}
+	}()
 
 	// Test connection
 	if err := db.Ping(); err != nil {
-		log.Fatalf("❌ Failed to ping PostgreSQL: %v", err)
+		log.Printf("❌ Failed to ping PostgreSQL: %v", err)
+		return
 	}
 
 	log.Printf("✅ Connected to PostgreSQL at %s:%s\n\n", dbHost, dbPort)
