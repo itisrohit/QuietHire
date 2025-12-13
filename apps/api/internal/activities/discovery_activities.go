@@ -538,3 +538,65 @@ type ATSInfo struct {
 	Confidence float64
 	IsATS      bool
 }
+
+// GetStaleCompanies finds companies that haven't been crawled recently
+func (a *DiscoveryActivities) GetStaleCompanies(ctx context.Context, daysOld int) ([]CompanyInfo, error) {
+	log.Printf("Finding companies not crawled in last %d days", daysOld)
+
+	if a.PostgreSQL == nil {
+		return nil, fmt.Errorf("PostgreSQL connection not available")
+	}
+
+	query := fmt.Sprintf(`
+		SELECT name, domain, COALESCE(description, '') as description, source
+		FROM companies
+		WHERE is_active = TRUE
+		AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '%d days')
+		ORDER BY last_crawled_at ASC NULLS FIRST
+		LIMIT 50
+	`, daysOld)
+
+	rows, err := a.PostgreSQL.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stale companies: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("Warning: Failed to close rows: %v", err)
+		}
+	}()
+
+	var companies []CompanyInfo
+	for rows.Next() {
+		var c CompanyInfo
+		err := rows.Scan(&c.Name, &c.Domain, &c.Description, &c.Source)
+		if err != nil {
+			log.Printf("Warning: Failed to scan company: %v", err)
+			continue
+		}
+		companies = append(companies, c)
+	}
+
+	log.Printf("Found %d stale companies", len(companies))
+	return companies, nil
+}
+
+// UpdateCompanyLastCrawled updates the last_crawled_at timestamp
+func (a *DiscoveryActivities) UpdateCompanyLastCrawled(ctx context.Context, domain string) error {
+	if a.PostgreSQL == nil {
+		return nil
+	}
+
+	_, err := a.PostgreSQL.ExecContext(ctx, `
+		UPDATE companies 
+		SET last_crawled_at = NOW()
+		WHERE domain = $1
+	`, domain)
+
+	if err != nil {
+		return fmt.Errorf("failed to update last_crawled_at: %w", err)
+	}
+
+	log.Printf("✅ Updated last_crawled_at for %s", domain)
+	return nil
+}

@@ -201,11 +201,21 @@ func CompanyDiscoveryWorkflow(ctx workflow.Context, input DiscoveryInput) (*Disc
 	return result, nil
 }
 
-// ContinuousDiscoveryWorkflow runs continuously to discover new companies and jobs
-// This workflow is meant to run indefinitely, discovering new sources
-func ContinuousDiscoveryWorkflow(ctx workflow.Context) error {
+// ContinuousDiscoveryInput defines input for continuous discovery
+type ContinuousDiscoveryInput struct {
+	GitHubQuery        string // Query for GitHub discovery
+	DorkQuery          string // Query for Dork discovery
+	StaleThresholdDays int    // Days since last crawl to consider stale
+	MaxNewCompanies    int    // Max new companies to discover per run
+	RunGitHubDiscovery bool   // Whether to run GitHub discovery
+	RunDorkDiscovery   bool   // Whether to run Google Dork discovery
+}
+
+// ContinuousDiscoveryWorkflow runs on a cron schedule to continuously discover companies and jobs
+// This workflow is meant to be scheduled and run periodically
+func ContinuousDiscoveryWorkflow(ctx workflow.Context, input ContinuousDiscoveryInput) error {
 	logger := workflow.GetLogger(ctx)
-	logger.Info("Starting ContinuousDiscoveryWorkflow")
+	logger.Info("Starting ContinuousDiscoveryWorkflow", "days_threshold", input.StaleThresholdDays)
 
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute,
@@ -218,61 +228,86 @@ func ContinuousDiscoveryWorkflow(ctx workflow.Context) error {
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
-	// Discovery strategies to run continuously
-	strategies := []struct {
-		Name          string
-		Query         string
-		Sources       []string
-		MaxResults    int
-		IntervalHours int
-	}{
-		{
-			Name:          "tech-companies-github",
-			Query:         "tech startup",
-			Sources:       []string{"github"},
-			MaxResults:    100,
-			IntervalHours: 24,
-		},
-		{
-			Name:          "hiring-dorks",
-			Query:         "we are hiring software engineer",
-			Sources:       []string{"google_dork"},
-			MaxResults:    200,
-			IntervalHours: 12,
-		},
-		{
-			Name:          "ats-platforms-dork",
-			Query:         "site:greenhouse.io OR site:lever.co OR site:ashbyhq.com",
-			Sources:       []string{"google_dork"},
-			MaxResults:    500,
-			IntervalHours: 6,
-		},
+	// Step 1: Find stale companies that need re-crawling
+	var staleCompanies []CompanyInfo
+	err := workflow.ExecuteActivity(ctx, "GetStaleCompanies", input.StaleThresholdDays).Get(ctx, &staleCompanies)
+	if err != nil {
+		logger.Error("Failed to get stale companies", "error", err)
+		return err
 	}
 
-	// Run discovery strategies in parallel
-	for _, strategy := range strategies {
-		input := DiscoveryInput{
-			Query:      strategy.Query,
-			Sources:    strategy.Sources,
-			MaxResults: strategy.MaxResults,
+	logger.Info("Found stale companies to re-crawl", "count", len(staleCompanies))
+
+	// Step 2: Trigger discovery workflow for each stale company
+	discoveryFutures := make([]workflow.ChildWorkflowFuture, 0, len(staleCompanies)+2)
+	for _, company := range staleCompanies {
+		discoveryInput := DiscoveryInput{
+			Query:      company.Domain,
+			Sources:    []string{"manual"},
+			MaxResults: 10,
 		}
 
-		// Start child workflow for each strategy
 		childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-			WorkflowID: "discovery-" + strategy.Name + "-" + workflow.Now(ctx).Format("20060102-150405"),
+			WorkflowID: "stale-company-" + company.Domain + "-" + workflow.Now(ctx).Format("20060102-150405"),
 		})
 
-		var result DiscoveryResult
-		err := workflow.ExecuteChildWorkflow(childCtx, CompanyDiscoveryWorkflow, input).Get(childCtx, &result)
-		if err != nil {
-			logger.Error("Discovery strategy failed", "strategy", strategy.Name, "error", err)
-		} else {
-			logger.Info("Discovery strategy completed", "strategy", strategy.Name, "result", result)
+		future := workflow.ExecuteChildWorkflow(childCtx, CompanyDiscoveryWorkflow, discoveryInput)
+		discoveryFutures = append(discoveryFutures, future)
+
+		// Update last_crawled_at timestamp
+		_ = workflow.ExecuteActivity(ctx, "UpdateCompanyLastCrawled", company.Domain)
+	}
+
+	// Step 3: Run discovery strategies based on configuration
+	if input.RunGitHubDiscovery {
+		logger.Info("Running GitHub discovery strategy")
+		githubInput := DiscoveryInput{
+			Query:      input.GitHubQuery,
+			Sources:    []string{"github"},
+			MaxResults: input.MaxNewCompanies,
 		}
 
-		// Wait before next iteration (sleep based on interval)
-		_ = workflow.Sleep(ctx, time.Duration(strategy.IntervalHours)*time.Hour)
+		childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+			WorkflowID: "github-discovery-" + workflow.Now(ctx).Format("20060102-150405"),
+		})
+
+		future := workflow.ExecuteChildWorkflow(childCtx, CompanyDiscoveryWorkflow, githubInput)
+		discoveryFutures = append(discoveryFutures, future)
 	}
+
+	if input.RunDorkDiscovery {
+		logger.Info("Running Google Dork discovery strategy")
+		dorkInput := DiscoveryInput{
+			Query:      input.DorkQuery,
+			Sources:    []string{"google_dork"},
+			MaxResults: input.MaxNewCompanies,
+		}
+
+		childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+			WorkflowID: "dork-discovery-" + workflow.Now(ctx).Format("20060102-150405"),
+		})
+
+		future := workflow.ExecuteChildWorkflow(childCtx, CompanyDiscoveryWorkflow, dorkInput)
+		discoveryFutures = append(discoveryFutures, future)
+	}
+
+	// Wait for all discovery workflows to complete
+	totalCompanies := 0
+	totalURLs := 0
+	for _, future := range discoveryFutures {
+		var result DiscoveryResult
+		if err := future.Get(ctx, &result); err != nil {
+			logger.Error("Discovery workflow failed", "error", err)
+			continue
+		}
+		totalCompanies += result.CompaniesFound
+		totalURLs += result.TotalURLsQueued
+	}
+
+	logger.Info("ContinuousDiscoveryWorkflow completed",
+		"stale_companies_processed", len(staleCompanies),
+		"new_companies_found", totalCompanies,
+		"total_urls_queued", totalURLs)
 
 	return nil
 }

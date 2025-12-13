@@ -146,6 +146,8 @@ func main() {
 	w.RegisterActivity(discoveryActivities.GenerateDorkQueries)
 	w.RegisterActivity(discoveryActivities.ExecuteDorkQuery)
 	w.RegisterActivity(discoveryActivities.DetectATSAndExtractDomain)
+	w.RegisterActivity(discoveryActivities.GetStaleCompanies)
+	w.RegisterActivity(discoveryActivities.UpdateCompanyLastCrawled)
 
 	log.Println("✅ Temporal worker started")
 	log.Println("Task Queue: job-crawl-queue")
@@ -178,6 +180,8 @@ func main() {
 	log.Println("    - GenerateDorkQueries")
 	log.Println("    - ExecuteDorkQuery")
 	log.Println("    - DetectATSAndExtractDomain")
+	log.Println("    - GetStaleCompanies")
+	log.Println("    - UpdateCompanyLastCrawled")
 
 	// Start listening to the Task Queue
 	if err := w.Run(worker.InterruptCh()); err != nil {
