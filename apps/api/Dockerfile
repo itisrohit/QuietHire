@@ -19,7 +19,7 @@ RUN GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux go build -o /app/bin/api ./cmd/api
 # Run stage
 FROM alpine:3.21
 
-RUN apk --no-cache add ca-certificates=20241010-r0
+RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
 

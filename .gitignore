@@ -30,7 +30,6 @@ ENV/
 *.egg-info/
 dist/
 build/
-uv.lock
 
 # IDEs
 .vscode/

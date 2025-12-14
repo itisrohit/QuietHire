@@ -136,4 +136,5 @@ jobs:
         with:
           dockerfile: "apps/*/Dockerfile*"
           recursive: true
+          ignore: DL3007,DL3018  # Ignore latest tag and apk version pinning warnings
           failure-threshold: error  # Only fail on errors, not warnings
