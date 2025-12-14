@@ -3,460 +3,886 @@
 ## Table of Contents
 - [Overview](#overview)
 - [Architecture Principles](#architecture-principles)
-- [System Context](#system-context)
-- [Container Architecture](#container-architecture)
-- [Component Breakdown](#component-breakdown)
-- [Data Flow](#data-flow)
+- [System Components](#system-components)
+- [Data Architecture](#data-architecture)
+- [Workflow Architecture](#workflow-architecture)
+- [Service Communication](#service-communication)
 - [Technology Stack](#technology-stack)
 - [Deployment Architecture](#deployment-architecture)
-- [Scalability & Performance](#scalability--performance)
+- [Scalability Strategy](#scalability-strategy)
+- [Security Architecture](#security-architecture)
+- [Monitoring & Observability](#monitoring--observability)
 
 ---
 
 ## Overview
 
-QuietHire is a real-time job search engine built as a Docker-first monorepo application. The system is designed to:
-- Index authentic job openings (public and hidden)
-- Automatically filter ghost/fake postings
-- Extract hiring manager contact information
-- Enable direct outreach to decision-makers
+QuietHire is a distributed job aggregation platform built using microservices architecture and workflow orchestration. The system automatically discovers companies, crawls career pages, extracts job postings, and indexes them for real-time search.
 
-**Core Value Proposition:** Type any role → instantly see only real jobs + the exact person to message.
+### Core Architecture Characteristics
+
+- **Microservices-based**: 15 independent, containerized services
+- **Event-driven**: Temporal workflows orchestrate asynchronous operations
+- **Polyglot**: Go for performance-critical services, Python for data processing
+- **Cloud-native**: Docker Compose for local development, ready for Kubernetes deployment
+- **Observable**: Comprehensive monitoring with Prometheus, Grafana, and Loki
 
 ---
 
 ## Architecture Principles
 
-### 1. **Docker-First Design**
-- Every service runs in a container from day one
-- Single `docker-compose.yml` orchestrates the entire stack
-- Easy transition to Kubernetes/Docker Swarm when needed
+### 1. Single Responsibility Principle
 
-### 2. **Monorepo Structure**
-- All code lives in one repository
-- Shared tooling and dependencies
-- Simplified deployment and versioning
+Each microservice has a well-defined, singular purpose:
+- **API**: User-facing REST endpoints and search interface
+- **Crawler**: Web page fetching and HTML extraction
+- **Parser**: HTML to structured data conversion
+- **OSINT Discovery**: Company and URL discovery
+- **Worker**: Temporal workflow execution
+- **Proxy Manager**: Proxy rotation and management
 
-### 3. **Microservices Architecture**
-- Services communicate via APIs and message queues
-- Each service has a single responsibility
-- Independent scaling of components
+### 2. Separation of Concerns
 
-### 4. **Polyglot Approach**
-- Go for high-performance APIs and crawlers
-- Python for ML/AI workloads and complex parsing
-- Choose the right tool for each job
+Clear boundaries between different system layers:
+- **Presentation Layer**: API Gateway (Go Fiber)
+- **Application Layer**: Temporal Workflows and Activities
+- **Data Processing Layer**: Crawler, Parser, OSINT services
+- **Data Layer**: PostgreSQL, ClickHouse, Typesense, Dragonfly
+- **Infrastructure Layer**: Docker, Temporal Server, Monitoring
 
-### 5. **Observability-First**
-- Comprehensive logging, metrics, and tracing from the start
-- Grafana stack for unified monitoring
-- Proactive error detection with Sentry
+### 3. Fault Tolerance
 
----
+System designed for reliability:
+- Automatic retries with exponential backoff (Temporal)
+- Activity timeouts and compensation logic
+- Database transaction management
+- Health checks for all services
+- Graceful degradation when services are unavailable
 
-## System Context
+### 4. Scalability First
 
-```mermaid
-C4Context
-    title System Context Diagram - QuietHire
+Horizontal scaling at every layer:
+- Stateless services for easy replication
+- Database sharding strategies planned
+- Distributed workflow execution
+- Parallel processing with configurable concurrency
 
-    Person(user, "Job Seeker", "Searches for authentic jobs and contacts hiring managers")
-    
-    System(quiethire, "QuietHire Platform", "Real-time job search engine with authenticity scoring and hiring manager extraction")
-    
-    System_Ext(jobboards, "Job Boards", "Public job boards (Indeed, LinkedIn, etc.)")
-    System_Ext(ats, "ATS Platforms", "Ashby, Greenhouse, Workday, Lever")
-    System_Ext(notion, "Notion Pages", "Company career pages on Notion")
-    System_Ext(llm, "LLM Services", "Groq, Llama models for parsing and email generation")
-    System_Ext(proxy, "Proxy Services", "Residential and datacenter proxies")
-    System_Ext(email, "Email Service", "SMTP/Email delivery service")
-    
-    Rel(user, quiethire, "Searches jobs, saves searches, sends emails")
-    Rel(quiethire, jobboards, "Crawls job postings")
-    Rel(quiethire, ats, "Crawls hidden jobs")
-    Rel(quiethire, notion, "Extracts career pages")
-    Rel(quiethire, llm, "Parses jobs, scores authenticity, generates emails")
-    Rel(quiethire, proxy, "Routes requests through")
-    Rel(quiethire, email, "Sends outreach emails")
-```
+### 5. Observability by Design
+
+Monitoring and logging built-in from day one:
+- Structured logging across all services
+- Custom Prometheus metrics
+- Distributed tracing with Temporal
+- Real-time dashboards with Grafana
 
 ---
 
-## Container Architecture
+## System Components
 
-```mermaid
-C4Container
-    title Container Diagram - QuietHire Platform
+### API Gateway (Go Fiber)
 
-    Person(user, "Job Seeker")
+**Responsibilities:**
+- Handle HTTP requests from users
+- Execute search queries against Typesense
+- Serve Prometheus metrics endpoint
+- Health check endpoint for monitoring
 
-    Container_Boundary(frontend, "Frontend Layer") {
-        Container(web, "Web Application", "Next.js/HTMX", "Search interface, job listings, user dashboard")
-    }
+**Key Features:**
+- High-performance HTTP routing
+- Connection pooling for databases
+- Request logging and error handling
+- CORS support for web clients
 
-    Container_Boundary(api_layer, "API Layer") {
-        Container(api, "Main API", "Go Fiber", "Search, user management, job retrieval")
-    }
+**Technology:**
+- Language: Go 1.21+
+- Framework: Fiber v2
+- Port: 3000
 
-    Container_Boundary(processing, "Processing Services") {
-        Container(crawler_go, "Go Crawler", "Go + Playwright", "Fast crawling for static pages")
-        Container(crawler_py, "Python Crawler", "Python + Undetected Playwright", "Stealth crawling for protected sites")
-        Container(parser, "Parser Service", "Python FastAPI + Unstructured + Groq", "Converts HTML to structured job data")
-        Container(realscore, "RealScore Engine", "Python FastAPI", "Authenticity scoring (0-100)")
-        Container(manager_ext, "Manager Extractor", "Python", "Extracts hiring manager info")
-        Container(email_writer, "Email Writer", "Python FastAPI + Llama", "Generates personalized emails")
-        Container(proxy_mgr, "Proxy Manager", "Go", "Manages proxy rotation")
-    }
-
-    Container_Boundary(orchestration, "Orchestration") {
-        Container(temporal, "Temporal Server", "Temporal + PostgreSQL", "Workflow orchestration")
-        Container(worker, "Temporal Workers", "Go", "Execute crawling workflows")
-    }
-
-    Container_Boundary(data_layer, "Data Layer") {
-        ContainerDb(typesense, "Typesense", "Search Engine", "Indexed job search")
-        ContainerDb(clickhouse, "ClickHouse", "Column Store", "Job storage and deduplication")
-        ContainerDb(postgres, "PostgreSQL", "Relational DB", "Users, payments, saved searches")
-        ContainerDb(dragonfly, "Dragonfly", "Redis-compatible", "Cache and sessions")
-    }
-
-    Container_Boundary(observability, "Observability") {
-        Container(grafana, "Grafana Stack", "Loki + Prometheus + Tempo", "Monitoring and logging")
-        Container(sentry, "Sentry", "Error Tracking", "Exception monitoring")
-    }
-
-    Rel(user, web, "Uses", "HTTPS")
-    Rel(web, api, "API calls", "REST/JSON")
-    Rel(api, typesense, "Searches", "HTTP")
-    Rel(api, postgres, "Reads/Writes", "SQL")
-    Rel(api, dragonfly, "Caches", "Redis Protocol")
-    
-    Rel(temporal, worker, "Schedules tasks")
-    Rel(worker, crawler_go, "Triggers")
-    Rel(worker, crawler_py, "Triggers")
-    Rel(crawler_go, proxy_mgr, "Gets proxies")
-    Rel(crawler_py, proxy_mgr, "Gets proxies")
-    
-    Rel(crawler_go, parser, "Sends HTML")
-    Rel(crawler_py, parser, "Sends HTML")
-    Rel(parser, realscore, "Sends structured job")
-    Rel(realscore, manager_ext, "Sends validated job")
-    Rel(manager_ext, clickhouse, "Stores job")
-    Rel(clickhouse, typesense, "Indexes nightly")
-    
-    Rel(api, email_writer, "Requests email")
-    Rel(email_writer, user, "Sends via SMTP")
-```
+**Endpoints:**
+- `GET /api/v1/search` - Job search
+- `GET /api/v1/jobs` - List jobs with filters
+- `GET /api/v1/stats` - System statistics
+- `GET /metrics` - Prometheus metrics
+- `GET /health` - Health check
 
 ---
 
-## Component Breakdown
+### Temporal Worker (Go)
 
-### Frontend Components
+**Responsibilities:**
+- Execute workflow and activity code
+- Manage workflow state and history
+- Handle retries and error recovery
+- Coordinate distributed operations
 
-```mermaid
-graph TB
-    subgraph "Web Application"
-        A[Search Interface]
-        B[Job Listings]
-        C[Job Detail View]
-        D[User Dashboard]
-        E[Saved Searches]
-        F[Email Composer]
-        G[Auth Pages]
-    end
-    
-    A --> B
-    B --> C
-    C --> F
-    D --> E
-    G --> D
-```
+**Registered Workflows:**
+1. `ContinuousDiscoveryWorkflow` - Main orchestration loop
+2. `CompanyDiscoveryWorkflow` - Per-company discovery
+3. `CareerPageCrawlWorkflow` - Job extraction pipeline
 
-### API Service Components
+**Registered Activities:**
+- `GetStaleCompanies` - Find companies needing re-crawl
+- `UpdateCompanyLastCrawled` - Update crawl timestamps
+- `DiscoverCareerPages` - OSINT career page discovery
+- `EnumerateSubdomains` - Subdomain enumeration
+- `DetectATS` - ATS platform detection
+- `CrawlCareerPage` - Fetch career page HTML
+- `ExtractJobLinks` - Parse job URLs from HTML
+- `CrawlJobPages` - Batch fetch job pages
+- `ParseJobData` - Extract structured job data
+- `StoreJobsInClickHouse` - Persist jobs to database
 
-```mermaid
-graph LR
-    subgraph "Go API Service"
-        A[HTTP Router]
-        B[Search Handler]
-        C[User Handler]
-        D[Job Handler]
-        E[Auth Middleware]
-        F[Rate Limiter]
-        G[Cache Layer]
-    end
-    
-    A --> E
-    E --> F
-    F --> B
-    F --> C
-    F --> D
-    B --> G
-    C --> G
-    D --> G
-```
+**Technology:**
+- Language: Go 1.21+
+- Framework: Temporal Go SDK
+- Task Queue: `quiethire-task-queue`
 
-### Crawler Components
+---
 
-```mermaid
-graph TB
-    subgraph "Crawling System"
-        A[Temporal Coordinator]
-        B[URL Queue]
-        C[Go Crawler Pool]
-        D[Python Crawler Pool]
-        E[Proxy Manager]
-        F[Rate Limiter]
-        G[HTML Storage]
-    end
-    
-    A --> B
-    B --> C
-    B --> D
-    C --> E
-    D --> E
-    C --> F
-    D --> F
-    C --> G
-    D --> G
-```
+### Crawler Service (Python)
 
-### Processing Pipeline Components
+**Responsibilities:**
+- Fetch web pages using Playwright
+- Handle JavaScript rendering
+- Execute browser automation
+- Return raw HTML for processing
 
-```mermaid
-graph LR
-    subgraph "Job Processing Pipeline"
-        A[Raw HTML]
-        B[Parser Service]
-        C[Structured Job]
-        D[RealScore Engine]
-        E[Scored Job]
-        F[Manager Extractor]
-        G[Complete Job]
-        H[ClickHouse]
-    end
-    
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    G --> H
+**Key Features:**
+- Batch URL crawling
+- Stealth mode for anti-bot measures
+- Proxy support for IP rotation
+- Screenshot capture for debugging
+- Configurable timeouts and retries
+
+**Technology:**
+- Language: Python 3.12+
+- Framework: FastAPI
+- Browser: Playwright (Chromium)
+- Port: 8002
+
+**Endpoints:**
+- `POST /crawl-batch` - Crawl multiple URLs
+
+---
+
+### Parser Service (Python)
+
+**Responsibilities:**
+- Convert raw HTML to structured job data
+- Extract job links from career pages
+- Apply multiple parsing strategies
+- Validate and clean extracted data
+
+**Parsing Strategies:**
+1. **JSON-LD Schema.org** (~10% coverage)
+   - Fast, structured data extraction
+   - High confidence when available
+   - Parses JobPosting schema directly
+   
+2. **Heuristics-based** (~90% coverage)
+   - Pattern matching for common formats
+   - Reliable for standard job boards
+   - CSS selector-based extraction
+
+**Technology:**
+- Language: Python 3.12+
+- Framework: FastAPI
+- Libraries: BeautifulSoup4, lxml
+- Port: 8001
+
+**Endpoints:**
+- `POST /api/v1/parse` - Parse job HTML
+- `POST /api/v1/extract-job-links` - Extract job URLs
+
+**Output Schema:**
+```json
+{
+  "title": "Senior Software Engineer",
+  "company": "Example Corp",
+  "location": "San Francisco, CA",
+  "description": "Full job description...",
+  "requirements": ["5+ years experience", "..."],
+  "salary_min": 150000,
+  "salary_max": 200000,
+  "remote": true,
+  "posted_at": "2024-12-14T00:00:00Z",
+  "application_url": "https://...",
+  "quality_score": 95
+}
 ```
 
 ---
 
-## Data Flow
+### OSINT Discovery Service (Python)
 
-### End-to-End User Search Flow
+**Responsibilities:**
+- Discover company career pages
+- Enumerate subdomains for job boards
+- Detect ATS platforms
+- GitHub-based company discovery
+- Google Dork-based URL discovery
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant Web
-    participant API
-    participant Cache
-    participant Typesense
-    participant ClickHouse
+**Discovery Methods:**
+1. **Career Page Discovery**
+   - Common patterns: `/careers`, `/jobs`, `/about/jobs`
+   - HTTP probing with status code validation
+   - Content-based verification
+   
+2. **Subdomain Enumeration**
+   - DNS bruteforcing
+   - crt.sh certificate transparency logs
+   - theHarvester integration
+   - Prioritize job-related subdomains: `careers.*`, `jobs.*`, `hiring.*`
+   
+3. **ATS Detection**
+   - URL pattern matching (Lever, Greenhouse, Workday, etc.)
+   - DOM signature analysis
+   - Platform-specific identifiers
 
-    User->>Web: Enter search query
-    Web->>API: GET /search?q=software+engineer
-    API->>Cache: Check cache
-    
-    alt Cache Hit
-        Cache-->>API: Return cached results
-    else Cache Miss
-        API->>Typesense: Search query
-        Typesense->>ClickHouse: Fetch full job details
-        ClickHouse-->>Typesense: Job data
-        Typesense-->>API: Search results
-        API->>Cache: Store results
-    end
-    
-    API-->>Web: JSON response
-    Web-->>User: Display job listings
+4. **GitHub Discovery**
+   - Search public repositories for company domains
+   - Extract URLs from README files
+   - Identify hiring announcements
+
+5. **Google Dork Discovery**
+   - SerpAPI integration
+   - Queries: "site:greenhouse.io hiring", "site:lever.co jobs"
+   - Pagination and result filtering
+
+**Technology:**
+- Language: Python 3.12+
+- Framework: FastAPI
+- Libraries: theHarvester, requests, beautifulsoup4
+- Port: 8004
+
+**Endpoints:**
+- `POST /api/v1/discover/career-pages` - Find career pages
+- `POST /api/v1/enumerate/subdomains` - Enumerate subdomains
+- `POST /api/v1/detect/ats` - Detect ATS platform
+- `POST /api/v1/discover/github` - GitHub company discovery
+- `POST /api/v1/discover/dork` - Google Dork discovery
+
+---
+
+### Proxy Manager (Go)
+
+**Responsibilities:**
+- Manage pool of residential and datacenter proxies
+- Rotate proxies to avoid rate limiting
+- Monitor proxy health and performance
+- Provide fresh proxies to crawler services
+
+**Key Features:**
+- Automatic proxy rotation
+- Health check monitoring
+- Failed proxy removal
+- Performance tracking
+- Load balancing across proxy pool
+
+**Technology:**
+- Language: Go 1.21+
+- Framework: Standard library (net/http)
+- Port: 8003
+
+**Endpoints:**
+- `GET /proxy` - Get next available proxy
+- `POST /proxy/health` - Report proxy health
+- `GET /proxy/stats` - Proxy statistics
+
+---
+
+## Data Architecture
+
+### Database Layer
+
+QuietHire uses four specialized databases, each optimized for specific use cases:
+
+#### 1. PostgreSQL (Primary Datastore)
+
+**Purpose**: Relational data, OSINT discovery data, crawl queue
+
+**Schema: OSINT Discovery**
+```sql
+CREATE TABLE companies (
+    id UUID PRIMARY KEY,
+    domain VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    last_crawled_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE discovered_urls (
+    id UUID PRIMARY KEY,
+    company_id UUID REFERENCES companies(id),
+    url TEXT NOT NULL,
+    url_type VARCHAR(50), -- career_page, job_board, ats
+    discovered_via VARCHAR(50), -- osint, github, dork, subdomain
+    priority INTEGER DEFAULT 5,
+    crawled BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE discovered_subdomains (
+    id UUID PRIMARY KEY,
+    company_id UUID REFERENCES companies(id),
+    subdomain VARCHAR(255) NOT NULL,
+    method VARCHAR(50), -- dns, crt, harvester
+    is_job_related BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE dork_results (
+    id UUID PRIMARY KEY,
+    query TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    snippet TEXT,
+    rank INTEGER,
+    discovered_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE crawl_queue (
+    id UUID PRIMARY KEY,
+    url TEXT NOT NULL,
+    priority INTEGER DEFAULT 5,
+    status VARCHAR(50) DEFAULT 'pending', -- pending, processing, completed, failed
+    attempts INTEGER DEFAULT 0,
+    last_attempt_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
 ```
 
-### Crawling and Ingestion Flow
+**Indexes:**
+- `idx_companies_domain` on `companies(domain)`
+- `idx_companies_last_crawled` on `companies(last_crawled_at)`
+- `idx_discovered_urls_company` on `discovered_urls(company_id)`
+- `idx_discovered_urls_crawled` on `discovered_urls(crawled)`
+- `idx_crawl_queue_status` on `crawl_queue(status, priority)`
 
-```mermaid
-sequenceDiagram
-    participant Temporal
-    participant Worker
-    participant Crawler
-    participant Proxy
-    participant Parser
-    participant RealScore
-    participant ManagerExt
-    participant ClickHouse
-    participant Typesense
+**Connection Configuration:**
+- Host: localhost
+- Port: 5432
+- Database: quiethire
+- Max Connections: 100
 
-    Temporal->>Worker: Schedule crawl job
-    Worker->>Crawler: Start crawling
-    Crawler->>Proxy: Request proxy
-    Proxy-->>Crawler: Proxy credentials
-    Crawler->>Crawler: Fetch job page
-    Crawler->>Parser: Send raw HTML
-    
-    Parser->>Parser: Extract structured data
-    Parser->>RealScore: Send job data
-    RealScore->>RealScore: Calculate authenticity score
-    
-    alt Score >= 70
-        RealScore->>ManagerExt: Send for manager extraction
-        ManagerExt->>ManagerExt: Extract hiring manager
-        ManagerExt->>ClickHouse: Store complete job
-        
-        Note over ClickHouse,Typesense: Nightly batch indexing
-        ClickHouse->>Typesense: Index new jobs
-    else Score < 70
-        RealScore->>RealScore: Discard ghost job
-    end
+---
+
+#### 2. ClickHouse (Analytics Database)
+
+**Purpose**: High-volume job storage, analytics, historical data
+
+**Schema: Jobs Table**
+```sql
+CREATE TABLE jobs (
+    id UUID,
+    url String,
+    url_hash String,
+    title String,
+    company_name String,
+    location String,
+    description String,
+    requirements Array(String),
+    salary_min Nullable(Int64),
+    salary_max Nullable(Int64),
+    salary_currency Nullable(String),
+    remote Boolean,
+    job_type String, -- full-time, part-time, contract
+    posted_at Nullable(DateTime),
+    application_url String,
+    quality_score Int8,
+    parsed_at DateTime,
+    crawled_at DateTime,
+    created_at DateTime DEFAULT now(),
+    updated_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(created_at)
+ORDER BY (company_name, url_hash, created_at);
 ```
 
-### Email Generation Flow
+**Key Design Decisions:**
+- `ReplacingMergeTree` for automatic deduplication
+- Partition by month for efficient querying
+- `url_hash` for deduplication (SHA-256)
+- Arrays for multi-value fields (requirements)
+- Nullable for optional fields (salary)
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant Web
-    participant API
-    participant EmailWriter
-    participant LLM
-    participant SMTP
+**Performance Characteristics:**
+- Insert throughput: 50,000+ rows/second
+- Query latency: <100ms for aggregations
+- Compression: 10:1 ratio on text fields
+- Storage: ~1KB per job record (compressed)
 
-    User->>Web: Click "Write Email for Me"
-    Web->>API: POST /email/generate
-    API->>EmailWriter: Request email generation
-    
-    EmailWriter->>EmailWriter: Extract job context
-    EmailWriter->>EmailWriter: Load user profile
-    EmailWriter->>LLM: Generate personalized email
-    LLM-->>EmailWriter: Email content
-    EmailWriter-->>API: Generated email
-    API-->>Web: Email preview
-    Web-->>User: Show editable email
-    
-    User->>Web: Click "Send"
-    Web->>API: POST /email/send
-    API->>SMTP: Send email
-    SMTP-->>API: Delivery confirmation
-    API-->>Web: Success
-    Web-->>User: Email sent notification
+**Connection Configuration:**
+- Host: localhost
+- Port: 9000
+- Database: quiethire
+- Max Connections: 50
+
+---
+
+#### 3. Typesense (Search Engine)
+
+**Purpose**: Real-time job search with typo-tolerance and faceting
+
+**Schema: Jobs Collection**
+```json
+{
+  "name": "jobs",
+  "fields": [
+    {"name": "id", "type": "string"},
+    {"name": "title", "type": "string"},
+    {"name": "company", "type": "string", "facet": true},
+    {"name": "location", "type": "string", "facet": true},
+    {"name": "description", "type": "string"},
+    {"name": "remote", "type": "bool", "facet": true},
+    {"name": "job_type", "type": "string", "facet": true},
+    {"name": "salary_min", "type": "int32", "optional": true},
+    {"name": "salary_max", "type": "int32", "optional": true},
+    {"name": "quality_score", "type": "int32"},
+    {"name": "posted_at", "type": "int64"}
+  ],
+  "default_sorting_field": "posted_at"
+}
 ```
 
-### Data Deduplication Flow
+**Search Features:**
+- Typo tolerance (2 typos allowed)
+- Prefix matching
+- Faceted search (company, location, remote)
+- Sorting by relevance or date
+- Filtering by salary range
+- Geo-search (planned)
 
-```mermaid
-flowchart TD
-    A[New Job Crawled] --> B{Generate Job Hash}
-    B --> C[URL + Title + Company]
-    C --> D{Check ClickHouse}
-    
-    D -->|Hash Exists| E{Compare Fields}
-    E -->|Identical| F[Skip - Duplicate]
-    E -->|Different| G[Update Existing Record]
-    
-    D -->|Hash Not Found| H[Insert New Job]
-    
-    G --> I[Mark as Updated]
-    H --> I
-    I --> J[Queue for Indexing]
+**Indexing Strategy:**
+- Batch indexing from ClickHouse (nightly)
+- Real-time indexing for new jobs
+- JSONL format for batch uploads (40 jobs/batch)
+- Automatic schema validation
+
+**Performance:**
+- Search latency: <50ms (p99)
+- Index size: ~2KB per job
+- Throughput: 1,000+ queries/second
+
+**Connection Configuration:**
+- Host: localhost
+- Port: 7108
+- API Key: (from environment)
+- Protocol: HTTP
+
+---
+
+#### 4. Dragonfly (Cache & Session Store)
+
+**Purpose**: Redis-compatible cache for high-frequency data
+
+**Use Cases:**
+1. **Activity Queue** (Temporal visibility)
+   - Key: `temporal:activity:{id}`
+   - TTL: 1 hour
+   
+2. **API Response Cache**
+   - Key: `api:search:{query_hash}`
+   - TTL: 5 minutes
+   
+3. **Crawler State**
+   - Key: `crawler:state:{workflow_id}`
+   - TTL: 24 hours
+   
+4. **Rate Limiting**
+   - Key: `ratelimit:{ip}:{endpoint}`
+   - TTL: 1 minute
+
+**Performance:**
+- Latency: <1ms (p99)
+- Throughput: 100,000+ ops/second
+- Memory: 2GB allocated
+
+**Connection Configuration:**
+- Host: localhost
+- Port: 6380
+- Protocol: Redis
+
+---
+
+### Data Flow Architecture
+
+#### Ingestion Pipeline
+
+```
+1. Company Discovery (OSINT Service)
+   ↓
+2. Store in PostgreSQL (discovered_urls table)
+   ↓
+3. Temporal Workflow Triggered
+   ↓
+4. Crawler Fetches HTML (Playwright)
+   ↓
+5. Parser Extracts Structured Data
+   ↓
+6. Quality Validation (score 0-100)
+   ↓
+7. Store in ClickHouse (jobs table)
+   ↓
+8. Index in Typesense (batch or real-time)
+   ↓
+9. Available for Search
+```
+
+#### Search Pipeline
+
+```
+1. User Query → API Gateway
+   ↓
+2. Check Dragonfly Cache
+   ↓ (cache miss)
+3. Query Typesense (typo-tolerant search)
+   ↓
+4. Typesense Returns Document IDs + Snippets
+   ↓
+5. Fetch Full Details from ClickHouse (optional)
+   ↓
+6. Cache Results in Dragonfly
+   ↓
+7. Return JSON Response to User
 ```
 
 ---
 
-### Languages & Frameworks
+## Workflow Architecture
 
-```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1e88e5','primaryTextColor':'#fff','primaryBorderColor':'#0d47a1','lineColor':'#42a5f5','secondaryColor':'#43a047','tertiaryColor':'#fb8c00','background':'#ffffff','mainBkg':'#1e88e5','secondaryBkg':'#43a047','tertiaryBkg':'#fb8c00'}}}%%
-graph TB
-    ROOT[QuietHire Tech Stack]
-    
-    subgraph Backend
-        GO[Go]
-        GO_FIBER[Fiber Framework]
-        GO_PLAY[Playwright-go]
-        GO_STD[Standard Library]
-        
-        PY[Python]
-        PY_FAST[FastAPI]
-        PY_PLAY[Undetected Playwright]
-        PY_UNST[Unstructured]
-    end
-    
-    subgraph Frontend
-        NEXT[Next.js]
-        HTMX[HTMX Alternative]
-        CSS[Vanilla CSS]
-    end
-    
-    subgraph Databases
-        TS[Typesense]
-        CH[ClickHouse]
-        PG[PostgreSQL]
-        DF[Dragonfly Redis]
-    end
-    
-    subgraph AI_ML[AI/ML]
-        GROQ[Groq API]
-        LLAMA[Llama 3.3 70B]
-        CUSTOM[Custom Scoring Models]
-    end
-    
-    subgraph Infrastructure
-        DOCKER[Docker]
-        COMPOSE[Docker Compose]
-        TEMPORAL[Temporal]
-        GRAFANA[Grafana Stack]
-    end
-    
-    ROOT --> Backend
-    ROOT --> Frontend
-    ROOT --> Databases
-    ROOT --> AI_ML
-    ROOT --> Infrastructure
-    
-    GO --> GO_FIBER
-    GO --> GO_PLAY
-    GO --> GO_STD
-    
-    PY --> PY_FAST
-    PY --> PY_PLAY
-    PY --> PY_UNST
-    
-    style ROOT fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#fff
-    style GO fill:#00ADD8,stroke:#00758f,color:#fff
-    style PY fill:#3776AB,stroke:#1e5a8e,color:#fff
-    style NEXT fill:#000000,stroke:#333,color:#fff
-    style HTMX fill:#3d72d7,stroke:#2557b8,color:#fff
-    style TS fill:#e34234,stroke:#c02d1f,color:#fff
-    style CH fill:#FFCC01,stroke:#d9ad00,color:#000
-    style PG fill:#336791,stroke:#1e4a6b,color:#fff
-    style DF fill:#DC382D,stroke:#b52d23,color:#fff
-    style GROQ fill:#f55036,stroke:#d13d27,color:#fff
-    style LLAMA fill:#0467DF,stroke:#0352b5,color:#fff
-    style DOCKER fill:#2496ED,stroke:#1a7cc4,color:#fff
-    style TEMPORAL fill:#000000,stroke:#333,color:#fff
+### Temporal Workflows
+
+QuietHire uses Temporal for durable, fault-tolerant workflow execution. Workflows are written in Go and executed by worker processes.
+
+#### 1. ContinuousDiscoveryWorkflow
+
+**Purpose**: Main orchestration loop for automated job discovery
+
+**Schedule**: Cron - Every 6 hours
+
+**Input Parameters:**
+```go
+type ContinuousDiscoveryInput struct {
+    GitHubQuery         string  // GitHub search query
+    DorkQuery           string  // Google Dork query
+    StaleThresholdDays  int     // Re-crawl threshold (default: 7)
+    MaxNewCompanies     int     // Max new companies per run (default: 50)
+    RunGitHubDiscovery  bool    // Enable GitHub discovery
+    RunDorkDiscovery    bool    // Enable Google Dork discovery
+}
 ```
 
-### Service Technology Mapping
+**Workflow Logic:**
+```go
+func ContinuousDiscoveryWorkflow(ctx workflow.Context, input ContinuousDiscoveryInput) error {
+    // 1. Find stale companies (not crawled in N days)
+    companies := GetStaleCompanies(staleThresholdDays)
+    
+    // 2. Trigger discovery for each company (parallel)
+    for _, company := range companies {
+        workflow.ExecuteChildWorkflow(CompanyDiscoveryWorkflow, company)
+        UpdateCompanyLastCrawled(company.Domain)
+    }
+    
+    // 3. (Optional) Discover new companies via GitHub
+    if input.RunGitHubDiscovery {
+        newCompanies := DiscoverFromGitHub(input.GitHubQuery, input.MaxNewCompanies)
+        // Store in PostgreSQL
+    }
+    
+    // 4. (Optional) Discover new companies via Google Dorks
+    if input.RunDorkDiscovery {
+        newUrls := DiscoverFromDorks(input.DorkQuery, input.MaxNewCompanies)
+        // Store in PostgreSQL
+    }
+    
+    return nil
+}
+```
 
-| Service | Language | Framework/Library | Purpose | Status |
-|---------|----------|-------------------|---------|--------|
-| **Main API** | Go | Fiber + Prometheus | High-performance REST API with metrics | ✅ Production |
-| **Go Crawler** | Go | Playwright-go | Fast static page crawling | 🚧 Planned |
-| **Python Crawler** | Python | Undetected Playwright | Stealth crawling | ✅ Production |
-| **Parser** | Python | FastAPI + Unstructured + Groq | HTML to structured data | ✅ Production |
-| **OSINT Discovery** | Python | FastAPI + theHarvester | Subdomain enumeration & company discovery | ✅ Production |
-| **RealScore** | Python | FastAPI + Custom ML | Authenticity scoring | 🚧 Planned |
-| **Manager Extractor** | Python | Custom + NLP | Contact extraction | 🚧 Planned |
-| **Email Writer** | Python | FastAPI + Llama 3.3 | Email generation | 🚧 Planned |
-| **Proxy Manager** | Go | Standard Library | Proxy rotation | ✅ Production |
-| **Temporal Workers** | Go | Temporal SDK | Workflow execution | ✅ Production |
-| **Web Frontend** | JavaScript | Next.js/HTMX | User interface | 🚧 Planned |
+**Error Handling:**
+- Retry policy: Exponential backoff, max 3 attempts
+- Timeout: 2 hours per workflow execution
+- Compensation: Log failures, continue with remaining companies
+
+---
+
+#### 2. CompanyDiscoveryWorkflow
+
+**Purpose**: Discover all job-related URLs for a single company
+
+**Input:**
+```go
+type CompanyDiscoveryInput struct {
+    Domain string
+}
+```
+
+**Workflow Logic:**
+```go
+func CompanyDiscoveryWorkflow(ctx workflow.Context, input CompanyDiscoveryInput) error {
+    // 1. Discover career pages
+    careerPages := DiscoverCareerPages(input.Domain)
+    
+    // 2. Enumerate subdomains
+    subdomains := EnumerateSubdomains(input.Domain)
+    
+    // 3. Detect ATS platforms
+    for _, url := range careerPages {
+        ats := DetectATS(url)
+        // Store ATS type for specialized parsing
+    }
+    
+    // 4. Store all discovered URLs in PostgreSQL
+    StoreDiscoveredURLs(careerPages, subdomains)
+    
+    // 5. Trigger crawl workflows for high-priority URLs
+    for _, url := range careerPages {
+        workflow.ExecuteChildWorkflow(CareerPageCrawlWorkflow, url)
+    }
+    
+    return nil
+}
+```
+
+**Parallelization:**
+- Subdomain enumeration runs in parallel (3 methods)
+- ATS detection runs concurrently for all URLs
+- Child workflows execute asynchronously
+
+---
+
+#### 3. CareerPageCrawlWorkflow
+
+**Purpose**: Extract and parse all jobs from a career page
+
+**Input:**
+```go
+type CareerPageCrawlInput struct {
+    URL string
+}
+```
+
+**Workflow Logic:**
+```go
+func CareerPageCrawlWorkflow(ctx workflow.Context, input CareerPageCrawlInput) error {
+    // 1. Crawl career page HTML
+    html := CrawlCareerPage(input.URL)
+    
+    // 2. Extract job links
+    jobLinks := ExtractJobLinks(html, input.URL)
+    
+    // 3. Batch crawl job pages (50 concurrent)
+    jobHTMLs := CrawlJobPages(jobLinks, batchSize=50)
+    
+    // 4. Parse each job page
+    jobs := []Job{}
+    for _, jobHTML := range jobHTMLs {
+        job := ParseJobData(jobHTML)
+        if job.QualityScore >= 70 {
+            jobs = append(jobs, job)
+        }
+    }
+    
+    // 5. Store jobs in ClickHouse (batch insert)
+    StoreJobsInClickHouse(jobs)
+    
+    return nil
+}
+```
+
+**Performance Optimizations:**
+- Parallel job page crawling (50 concurrent)
+- Batch database inserts (40 jobs/batch)
+- Quality filtering before storage (score >= 70)
+- Deduplication via URL hashing
+
+---
+
+### Activity Design Patterns
+
+#### Idempotent Activities
+
+All activities are designed to be idempotent (can be retried safely):
+```go
+func CrawlCareerPage(ctx context.Context, url string) (string, error) {
+    // Check cache first (idempotency)
+    if cached := getFromCache(url); cached != "" {
+        return cached, nil
+    }
+    
+    // Perform crawl
+    html, err := crawler.Fetch(url)
+    if err != nil {
+        return "", err
+    }
+    
+    // Cache result
+    cacheResult(url, html, ttl=1hour)
+    
+    return html, nil
+}
+```
+
+#### Activity Timeouts
+
+Each activity has appropriate timeouts:
+- Fast activities (DB queries): 10 seconds
+- Medium activities (API calls): 30 seconds
+- Slow activities (crawling): 2 minutes
+
+#### Retry Policies
+
+```go
+retryPolicy := &temporal.RetryPolicy{
+    InitialInterval:    1 * time.Second,
+    BackoffCoefficient: 2.0,
+    MaximumInterval:    60 * time.Second,
+    MaximumAttempts:    3,
+}
+```
+
+---
+
+## Service Communication
+
+### Communication Patterns
+
+#### 1. Synchronous HTTP (REST)
+
+Used for request-response interactions:
+- API Gateway → Typesense (search queries)
+- Worker → Parser Service (job parsing)
+- Worker → Crawler Service (page fetching)
+- Worker → OSINT Service (discovery)
+
+**Example:**
+```go
+// Worker calls Parser Service
+resp, err := http.Post("http://parser:8001/api/v1/parse", 
+    "application/json", 
+    bytes.NewBuffer(payload))
+```
+
+#### 2. Asynchronous Workflows (Temporal)
+
+Used for long-running, distributed operations:
+- Continuous discovery orchestration
+- Multi-step job extraction pipeline
+- Error recovery and retries
+
+**Example:**
+```go
+// Start child workflow
+childWorkflow := workflow.ExecuteChildWorkflow(
+    ctx, 
+    CompanyDiscoveryWorkflow, 
+    input,
+)
+```
+
+#### 3. Database as Message Queue
+
+Used for decoupled processing:
+- `crawl_queue` table in PostgreSQL
+- Workers poll for pending URLs
+- Status updates for coordination
+
+---
+
+### Service Discovery
+
+**Local Development:**
+- Docker Compose DNS: Service names resolve to container IPs
+- Example: `http://parser:8001`
+
+**Production:**
+- Kubernetes Service Discovery
+- Environment variables for endpoints
+- Health checks for availability
+
+---
+
+## Technology Stack
+
+### Backend Languages
+
+#### Go (Golang)
+
+**Used For:**
+- API Gateway (high-performance HTTP)
+- Temporal Worker (workflow execution)
+- Proxy Manager (concurrent connections)
+
+**Rationale:**
+- Excellent concurrency primitives (goroutines)
+- Low latency, high throughput
+- Strong standard library
+- Fast compilation and deployment
+
+**Key Libraries:**
+- Fiber v2: Web framework
+- Temporal Go SDK: Workflow orchestration
+- pgx: PostgreSQL driver
+- ClickHouse Go client
+
+---
+
+#### Python
+
+**Used For:**
+- Crawler (Playwright, stealth techniques)
+- Parser (HTML parsing, structured data extraction)
+- OSINT Discovery (theHarvester, APIs)
+
+**Rationale:**
+- Rich ecosystem for web scraping
+- Excellent HTML/XML parsing libraries
+- Rapid development for data processing
+- Strong support for browser automation
+
+**Key Libraries:**
+- FastAPI: Async web framework
+- Playwright: Browser automation
+- BeautifulSoup4: HTML parsing
+- lxml: Fast XML/HTML processing
+- theHarvester: OSINT tool
+
+---
+
+### Infrastructure
+
+#### Docker & Docker Compose
+
+**Configuration:**
+- 15 services defined in `docker-compose.yml`
+- Shared networks for service communication
+- Volume mounts for persistence
+- Health checks for all services
+
+**Scaling:**
+```bash
+# Scale crawler instances
+docker-compose up -d --scale crawler-python=10
+```
+
+---
+
+#### Temporal
+
+**Configuration:**
+- Server: Temporal OSS
+- Persistence: PostgreSQL
+- UI: Web interface on port 8080
+
+**Task Queues:**
+- `quiethire-task-queue`: Default queue for all workflows
+
+**Namespaces:**
+- `default`: All workflows run in default namespace
 
 ---
 
@@ -464,398 +890,228 @@ graph TB
 
 ### Local Development
 
-```mermaid
-graph TB
-    subgraph "Developer Machine"
-        A[Docker Compose]
-        
-        subgraph "Application Services"
-            B[API]
-            C[Web]
-            D[Crawlers]
-            E[Processing Services]
-        end
-        
-        subgraph "Data Services"
-            F[PostgreSQL]
-            G[ClickHouse]
-            H[Typesense]
-            I[Dragonfly]
-        end
-        
-        subgraph "Infrastructure"
-            J[Temporal]
-            K[Grafana Stack]
-        end
-    end
-    
-    A --> B
-    A --> C
-    A --> D
-    A --> E
-    A --> F
-    A --> G
-    A --> H
-    A --> I
-    A --> J
-    A --> K
+```
+Developer Machine
+├── Docker Compose (15 containers)
+│   ├── Application Services (API, Worker, Crawler, Parser, OSINT, Proxy)
+│   ├── Data Services (PostgreSQL, ClickHouse, Typesense, Dragonfly)
+│   └── Infrastructure (Temporal, Prometheus, Grafana, Loki)
+└── Source Code (mounted volumes for hot-reload)
 ```
 
-### Scaling Strategy
-
-```mermaid
-flowchart LR
-    A[Single Docker Compose] --> B{Traffic Growth}
-    B -->|Low Traffic| C[Scale with --scale flag]
-    C --> D[docker compose up --scale crawler-python=8]
-    
-    B -->|Medium Traffic| E[Docker Swarm]
-    E --> F[Multi-node deployment]
-    
-    B -->|High Traffic| G[Kubernetes]
-    G --> H[Auto-scaling pods]
-    G --> I[Load balancing]
-    G --> J[Service mesh]
-```
-
-### Service Scaling Configuration
-
-```yaml
-# Example scaling scenarios
-# Low traffic (1-1000 users)
-- api: 2 instances
-- crawler-go: 4 instances
-- crawler-python: 4 instances
-- typesense: 1 node
-
-# Medium traffic (1000-10000 users)
-- api: 4-6 instances
-- crawler-go: 6-8 instances
-- crawler-python: 8-12 instances
-- typesense: 3 nodes (cluster)
-
-# High traffic (10000+ users)
-- api: 10+ instances (auto-scale)
-- crawler-go: 10+ instances
-- crawler-python: 12+ instances
-- typesense: 3-5 nodes
-- clickhouse: cluster mode
-```
+**Advantages:**
+- Complete stack on laptop
+- Fast iteration cycles
+- Consistent environment
 
 ---
 
-## Scalability & Performance
+### Production Deployment (Planned)
 
-### Performance Targets
+#### Docker Swarm (Simple Scaling)
 
-```mermaid
-graph LR
-    subgraph "Performance SLAs"
-        A[Search Latency<br/>< 200ms p95]
-        B[API Response<br/>< 100ms p95]
-        C[Email Generation<br/>< 400ms]
-        D[Crawler Throughput<br/>100k+ jobs/day]
-        E[System Uptime<br/>99.9%]
-    end
+```bash
+# Initialize swarm
+docker swarm init
+
+# Deploy stack
+docker stack deploy -c docker-compose.prod.yml quiethire
+
+# Scale services
+docker service scale quiethire_crawler-python=20
 ```
 
-### Caching Strategy
+**Advantages:**
+- Simple migration from Compose
+- Built-in load balancing
+- No additional orchestration complexity
 
-```mermaid
-flowchart TD
-    A[User Request] --> B{Check Cache Layer}
-    
-    B -->|Hit| C[Return from Dragonfly]
-    C --> D[Response < 10ms]
-    
-    B -->|Miss| E{Check Typesense}
-    E -->|Found| F[Return from Search Engine]
-    F --> G[Cache in Dragonfly]
-    G --> H[Response < 200ms]
-    
-    E -->|Not Found| I[Query ClickHouse]
-    I --> J[Index in Typesense]
-    J --> G
+---
+
+#### Kubernetes (Advanced Scaling)
+
+```
+Kubernetes Cluster
+├── Ingress Controller (nginx)
+├── Namespaces
+│   ├── quiethire-prod
+│   └── quiethire-staging
+├── Deployments
+│   ├── api (3 replicas)
+│   ├── worker (5 replicas)
+│   ├── crawler-python (10 replicas)
+│   └── parser (5 replicas)
+├── StatefulSets
+│   ├── postgres
+│   ├── clickhouse
+│   └── typesense (3 nodes)
+├── Services (ClusterIP, LoadBalancer)
+└── ConfigMaps & Secrets
 ```
 
-### Database Optimization
+**Advantages:**
+- Auto-scaling based on metrics
+- Rolling updates, zero-downtime
+- Advanced networking and security
+- Multi-region deployment
 
-```mermaid
-graph TB
-    subgraph "Data Storage Strategy"
-        A[Hot Data<br/>Dragonfly Cache<br/>TTL: 5 min]
-        B[Warm Data<br/>Typesense Index<br/>Recent 6 months]
-        C[Cold Data<br/>ClickHouse<br/>All historical data]
-    end
-    
-    A --> B
-    B --> C
-    
-    style A fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style B fill:#ffd93d,stroke:#d9ad00,color:#000
-    style C fill:#6bcf7f,stroke:#37b24d,color:#000
-```
+---
 
-### Horizontal Scaling Points
+## Scalability Strategy
 
-```mermaid
-graph TD
-    A[Load Balancer] --> B[API Instances]
-    A --> C[API Instances]
-    A --> D[API Instances]
-    
-    E[Temporal] --> F[Worker Pool 1]
-    E --> G[Worker Pool 2]
-    E --> H[Worker Pool N]
-    
-    F --> I[Crawler Go 1-4]
-    F --> J[Crawler Py 1-4]
-    
-    G --> K[Crawler Go 5-8]
-    G --> L[Crawler Py 5-8]
-    
-    I --> M[Proxy Pool]
-    J --> M
-    K --> M
-    L --> M
-```
+### Horizontal Scaling Targets
+
+| Service | Current | 1K Users | 10K Users | 100K Users |
+|---------|---------|----------|-----------|------------|
+| **API** | 1 | 2 | 5 | 20 |
+| **Worker** | 1 | 2 | 5 | 10 |
+| **Crawler** | 1 | 4 | 10 | 30 |
+| **Parser** | 1 | 2 | 5 | 15 |
+| **OSINT** | 1 | 1 | 2 | 5 |
+| **Proxy Manager** | 1 | 1 | 2 | 5 |
+
+### Database Scaling
+
+#### PostgreSQL
+- **1K users**: Single instance
+- **10K users**: Read replicas (1 primary, 2 replicas)
+- **100K users**: Sharding by company domain
+
+#### ClickHouse
+- **1K users**: Single node
+- **10K users**: 3-node cluster
+- **100K users**: Distributed table across 10 nodes
+
+#### Typesense
+- **1K users**: Single node
+- **10K users**: 3-node cluster
+- **100K users**: 5-node cluster with replication
 
 ---
 
 ## Security Architecture
 
-### Authentication Flow
+### Authentication & Authorization
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant Web
-    participant API
-    participant Auth
-    participant DB
-    participant Session
+**Current State:**
+- No authentication (public search)
 
-    User->>Web: Login credentials
-    Web->>API: POST /auth/login
-    API->>Auth: Validate credentials
-    Auth->>DB: Check user
-    DB-->>Auth: User data
-    Auth->>Auth: Hash & verify password
-    Auth->>Session: Create session token
-    Session-->>Auth: Token
-    Auth-->>API: JWT token
-    API-->>Web: Set secure cookie
-    Web-->>User: Redirect to dashboard
-```
+**Planned:**
+- JWT-based authentication
+- OAuth2 for social login
+- API key authentication for programmatic access
+- Role-based access control (RBAC)
 
-### Data Protection Layers
+---
 
-```mermaid
-graph TB
-    subgraph "Security Layers"
-        A[HTTPS/TLS]
-        B[Rate Limiting]
-        C[API Authentication]
-        D[Input Validation]
-        E[SQL Injection Prevention]
-        F[XSS Protection]
-        G[CSRF Tokens]
-        H[Data Encryption at Rest]
-    end
-    
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    D --> F
-    D --> G
-    E --> H
-    F --> H
-```
+### Data Protection
+
+**In Transit:**
+- TLS 1.3 for all external communications
+- Encrypted connections to databases
+
+**At Rest:**
+- Database encryption (PostgreSQL, ClickHouse)
+- Encrypted secrets in Docker/K8s
+
+---
+
+### Security Best Practices
+
+1. **Input Validation**: All user inputs sanitized
+2. **SQL Injection Prevention**: Parameterized queries only
+3. **Rate Limiting**: Per-IP and per-user limits
+4. **CORS**: Restricted to allowed origins
+5. **Secrets Management**: Environment variables, never hardcoded
 
 ---
 
 ## Monitoring & Observability
 
-### Observability Stack
+### Metrics (Prometheus)
 
-```mermaid
-graph TB
-    subgraph "Application Services"
-        A[API]
-        B[Crawlers]
-        C[Processing Services]
-    end
-    
-    subgraph "Observability Stack"
-        D[Prometheus<br/>Metrics]
-        E[Loki<br/>Logs]
-        F[Tempo<br/>Traces]
-        G[Grafana<br/>Visualization]
-        H[Sentry<br/>Errors]
-    end
-    
-    A --> D
-    A --> E
-    A --> F
-    A --> H
-    
-    B --> D
-    B --> E
-    B --> F
-    B --> H
-    
-    C --> D
-    C --> E
-    C --> F
-    C --> H
-    
-    D --> G
-    E --> G
-    F --> G
+**Custom Metrics:**
+```
+quiethire_jobs_total          # Total jobs indexed
+quiethire_crawler_requests    # Crawler requests per second
+quiethire_parser_duration     # Parser latency histogram
+quiethire_workflow_duration   # Workflow execution time
+quiethire_error_total         # Error count by service
 ```
 
-### Key Metrics Dashboard
+**System Metrics:**
+- CPU usage per service
+- Memory consumption
+- Goroutine count (Go services)
+- Database connections
+- HTTP request latency
 
-```mermaid
-graph LR
-    subgraph "Monitored Metrics"
-        A[Request Rate<br/>req/sec]
-        B[Error Rate<br/>%]
-        C[Latency<br/>p50, p95, p99]
-        D[Crawler Success<br/>%]
-        E[Database Connections<br/>active/max]
-        F[Cache Hit Rate<br/>%]
-        G[Queue Depth<br/>pending jobs]
-        H[System Resources<br/>CPU, Memory, Disk]
-    end
+**Scrape Configuration:**
+```yaml
+scrape_configs:
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:3000']
+  - job_name: 'worker'
+    static_configs:
+      - targets: ['worker:9090']
 ```
 
 ---
 
-## Disaster Recovery
+### Logging (Loki)
 
-### Backup Strategy
-
-```mermaid
-flowchart TD
-    A[Data Sources] --> B{Backup Type}
-    
-    B -->|Critical| C[PostgreSQL]
-    C --> D[Daily Full Backup]
-    C --> E[Hourly Incremental]
-    
-    B -->|Important| F[ClickHouse]
-    F --> G[Daily Backup]
-    
-    B -->|Rebuildable| H[Typesense]
-    H --> I[Weekly Snapshot]
-    
-    D --> J[S3/Cloud Storage]
-    E --> J
-    G --> J
-    I --> J
-    
-    J --> K[30-day Retention]
+**Structured Logging Format:**
+```json
+{
+  "timestamp": "2024-12-14T10:30:00Z",
+  "level": "info",
+  "service": "worker",
+  "workflow_id": "abc123",
+  "message": "Started CompanyDiscoveryWorkflow",
+  "company": "example.com"
+}
 ```
 
-### Failure Recovery
-
-```mermaid
-sequenceDiagram
-    participant Monitor
-    participant Alert
-    participant OnCall
-    participant System
-    participant Backup
-
-    Monitor->>Monitor: Detect failure
-    Monitor->>Alert: Trigger alert
-    Alert->>OnCall: Notify (PagerDuty/Email)
-    
-    alt Automatic Recovery
-        Monitor->>System: Restart service
-        System-->>Monitor: Health check OK
-    else Manual Recovery Required
-        OnCall->>System: Investigate
-        OnCall->>Backup: Restore if needed
-        Backup-->>System: Data restored
-        OnCall->>System: Restart services
-    end
-    
-    System->>Monitor: Resume monitoring
-```
+**Log Aggregation:**
+- All services send logs to Loki
+- Grafana for log querying and visualization
+- Retention: 30 days
 
 ---
 
-## Future Architecture Considerations
+### Dashboards (Grafana)
 
-### Phase 1: Current State (Weeks 1-30)
-- Single Docker Compose deployment
-- Manual scaling with `--scale` flag
-- Single-region deployment
+**System Overview Dashboard:**
+- Total jobs indexed (gauge)
+- Jobs indexed per day (graph)
+- Crawler success rate (gauge)
+- API request rate (graph)
+- Error rate (graph)
 
-### Phase 2: Growth (Months 10-12)
-- Migrate to Docker Swarm or Kubernetes
-- Multi-region deployment
-- Auto-scaling based on metrics
-- CDN for static assets
+**Workflow Dashboard:**
+- Active workflows (gauge)
+- Workflow success rate (gauge)
+- Workflow duration (histogram)
+- Failed workflows (list)
 
-### Phase 3: Scale (Year 2+)
-- Global deployment across multiple regions
-- Advanced caching with edge computing
-- Machine learning model improvements
-- Real-time collaboration features
-
-```mermaid
-timeline
-    title Architecture Evolution
-    Phase 1 (Months 1-7) : Docker Compose
-                          : Single Server
-                          : Manual Scaling
-    Phase 2 (Months 8-12) : Docker Swarm/K8s
-                           : Multi-node Cluster
-                           : Auto-scaling
-    Phase 3 (Year 2+) : Multi-region
-                      : Edge Computing
-                      : Advanced ML
-```
+**Database Dashboard:**
+- Query latency (graph)
+- Connection pool usage (gauge)
+- Database size (gauge)
+- Slow queries (list)
 
 ---
-
-## Recent Updates (December 2024)
-
-### Fixed Issues
-- ✅ **Subdomain Enumeration Bug** - JSON parsing mismatch between Python OSINT service and Go worker resolved
-  - Go struct updated to match Python API response format
-  - Now successfully discovering 10-300+ subdomains per company
-  - Intelligent prioritization of job-related subdomains (careers.*, jobs.*, hiring.*)
-  
-### New Features
-- ✅ **Prometheus Metrics Endpoint** - `/metrics` endpoint added to main API
-  - Custom gauge: `quiethire_jobs_total` (real-time job count from ClickHouse)
-  - Standard Go metrics: goroutines, memory, GC stats
-  - Process metrics: CPU, file descriptors, etc.
-  
-- ✅ **ClickHouse→Typesense Indexing Tool** - `index-jobs` CLI utility
-  - Syncs all jobs from ClickHouse to Typesense search index
-  - Batch processing (40 jobs per batch) using JSONL format
-  - Comprehensive error handling and progress logging
-  
-### Production Status
-- **Current Deployment**: 15 services running in Docker Compose
-- **Data Indexed**: 25+ jobs from 3 companies, 383 discovered URLs
-- **Code Quality**: 0 linting errors (Go + Python)
-- **Test Coverage**: End-to-end workflows tested and operational
 
 ## Conclusion
 
-This architecture is designed for:
-- **Simplicity**: Start with Docker Compose, scale when needed
-- **Flexibility**: Polyglot approach using the best tool for each job
-- **Observability**: Comprehensive monitoring from day one (Prometheus + Grafana + Loki)
-- **Scalability**: Clear path from single server to global deployment
-- **Maintainability**: Solo developer can understand and manage the entire system
-- **Reliability**: Temporal workflows with retry logic and error handling
+QuietHire's architecture is designed for:
+- **Reliability**: Temporal workflows with automatic retries
+- **Scalability**: Horizontal scaling at every layer
+- **Maintainability**: Clear service boundaries, comprehensive monitoring
+- **Performance**: Optimized databases, caching, parallel processing
+- **Flexibility**: Polyglot architecture using best tools for each job
 
-The modular design allows incremental development while maintaining system integrity. Each service can be developed, tested, and deployed independently, making it ideal for solo development with the ability to scale as the platform grows.
+The system is currently running in local development with all 15 services containerized. The architecture supports seamless migration to production environments (Docker Swarm or Kubernetes) with minimal code changes.
+
+Key architectural decisions prioritize simplicity for solo development while maintaining production-ready patterns for future scaling.
