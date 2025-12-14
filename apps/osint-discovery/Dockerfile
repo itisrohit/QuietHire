@@ -5,23 +5,24 @@ WORKDIR /app
 # Install system dependencies (git is needed for theHarvester installation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for faster dependency management
-RUN pip install --no-cache-dir uv
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy dependency files
-COPY pyproject.toml .
-COPY uv.lock .
+COPY pyproject.toml ./
+COPY uv.lock ./
 
-# Install dependencies
-RUN uv pip install --system --no-cache -r pyproject.toml
+# Sync dependencies
+RUN uv sync --frozen --no-dev
 
 # Copy application code
-COPY main.py .
+COPY . .
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application using uv
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

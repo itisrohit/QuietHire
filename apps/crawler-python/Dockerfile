@@ -16,13 +16,12 @@ RUN apt-get update && apt-get install -y \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
+COPY uv.lock ./
 
-# Sync dependencies
-RUN uv sync --frozen --no-dev
-
-# Install Playwright browsers
-RUN uv run playwright install --with-deps chromium
+# Sync dependencies and install Playwright browsers
+RUN uv sync --frozen --no-dev && \
+    uv run playwright install --with-deps chromium
 
 # Copy application code
 COPY . .
