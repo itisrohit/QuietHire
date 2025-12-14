@@ -14,7 +14,7 @@
 
 ## Overview
 
-QuietHire is an enterprise-grade job aggregation engine that automatically discovers, crawls, and indexes job postings from tech company career pages. Built with production-ready microservices architecture, it demonstrates advanced distributed systems patterns, workflow orchestration, and data engineering techniques.
+QuietHire is a job aggregation engine that automatically discovers, crawls, and indexes job postings from tech company career pages. Built with production-ready microservices architecture, it demonstrates advanced distributed systems patterns, workflow orchestration, and data engineering techniques.
 
 ### Key Capabilities
 
