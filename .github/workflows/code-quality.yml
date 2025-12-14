@@ -1,0 +1,169 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # Go linting and formatting
+  go-lint:
+    name: Go Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Run golangci-lint on API
+        working-directory: apps/api
+        run: golangci-lint run --timeout=5m
+
+      - name: Run golangci-lint on Proxy Manager
+        working-directory: apps/proxy-manager
+        run: golangci-lint run --timeout=5m
+
+      - name: Check Go formatting
+        run: |
+          gofmt -l apps/api apps/proxy-manager
+          if [ -n "$(gofmt -l apps/api apps/proxy-manager)" ]; then
+            echo "Go files are not formatted. Run 'gofmt -w .' to fix."
+            exit 1
+          fi
+
+  # Go build verification
+  go-build:
+    name: Go Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build API service
+        working-directory: apps/api
+        run: |
+          go build -v ./cmd/api
+          go build -v ./cmd/worker
+          go build -v ./cmd/schedule-discovery
+          go build -v ./cmd/test-continuous
+          go build -v ./cmd/index-jobs
+
+      - name: Build Proxy Manager
+        working-directory: apps/proxy-manager
+        run: go build -v .
+
+  # Python linting
+  python-lint:
+    name: Python Linting
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [parser, crawler-python, osint-discovery]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        working-directory: apps/${{ matrix.service }}
+        run: uv sync
+
+      - name: Run ruff linting
+        working-directory: apps/${{ matrix.service }}
+        run: uv run ruff check .
+
+      - name: Run ruff formatting check
+        working-directory: apps/${{ matrix.service }}
+        run: uv run ruff format --check .
+
+  # Python type checking
+  python-typecheck:
+    name: Python Type Checking
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [parser, crawler-python, osint-discovery]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        working-directory: apps/${{ matrix.service }}
+        run: uv sync
+
+      - name: Run mypy type checking
+        working-directory: apps/${{ matrix.service }}
+        run: uv run mypy . || true  # Continue even if mypy fails (for now)
+
+  # YAML linting
+  yaml-lint:
+    name: YAML Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: yamllint -c .yamllint.yml docker-compose.yml .github/workflows/
+
+  # Markdown linting
+  markdown-lint:
+    name: Markdown Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v14
+        with:
+          globs: |
+            **/*.md
+            !**/node_modules/**
+            !**/.venv/**
