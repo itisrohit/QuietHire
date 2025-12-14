@@ -31,14 +31,12 @@ QuietHire is an enterprise-grade job aggregation engine that automatically disco
 
 | Metric | Value |
 |--------|-------|
-| **Jobs Indexed** | 1,000+ daily |
 | **Companies Tracked** | 100+ tech companies |
 | **URLs Discovered** | 1,500+ career pages |
 | **Search Latency** | <50ms (p99) |
 | **Discovery Rate** | 150+ URLs/company |
 | **Crawler Throughput** | 100 pages/minute |
 | **Data Quality** | 93/100 score |
-| **Uptime** | 99.5% over 30 days |
 
 ---
 
