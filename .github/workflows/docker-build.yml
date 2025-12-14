@@ -11,7 +11,7 @@ jobs:
   validate-compose:
     name: Validate Docker Compose
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
     strategy:
       matrix:
         service: [api, proxy-manager]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,7 +48,7 @@ jobs:
   build-worker:
     name: Build Worker Image
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
     strategy:
       matrix:
         service: [parser, crawler-python, osint-discovery]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -96,7 +96,7 @@ jobs:
     name: Check Image Sizes
     runs-on: ubuntu-latest
     needs: [build-go-services, build-worker, build-python-services]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,7 +109,7 @@ jobs:
         run: |
           echo "Image sizes:"
           docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep quiethire || true
-          
+
           # Warning if images are too large (optional check)
           echo "Checking for oversized images..."
           for img in $(docker images --format "{{.Repository}}:{{.Tag}}" | grep quiethire); do
@@ -126,7 +126,7 @@ jobs:
   hadolint:
     name: Dockerfile Linting
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

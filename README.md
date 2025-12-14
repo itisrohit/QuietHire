@@ -641,6 +641,7 @@ Contributions are welcome! This project showcases modern distributed systems arc
 - Share feedback and suggestions
 
 **Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for detailed guidelines on:**
+
 - Development setup
 - Coding standards
 - Commit conventions
@@ -648,6 +649,7 @@ Contributions are welcome! This project showcases modern distributed systems arc
 - Testing requirements
 
 **Key Areas for Contribution:**
+
 - Parser improvements for additional ATS platforms
 - Enhanced OSINT discovery methods
 - Performance optimizations
@@ -665,17 +667,10 @@ MIT License - See [LICENSE](LICENSE) for details
 ## Acknowledgments
 
 Built with:
+
 - [Temporal](https://temporal.io) - Workflow orchestration
 - [Playwright](https://playwright.dev) - Browser automation
 - [ClickHouse](https://clickhouse.com) - Analytics database
 - [Typesense](https://typesense.org) - Search engine
 - [Fiber](https://gofiber.io) - Go web framework
 - [FastAPI](https://fastapi.tiangolo.com) - Python web framework
-
----
-
-
-
-<div align="center">
-  <strong>Built for demonstrating modern distributed systems architecture</strong>
-</div>

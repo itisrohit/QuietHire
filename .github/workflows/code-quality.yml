@@ -11,7 +11,7 @@ jobs:
   go-lint:
     name: Go Linting
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
   go-build:
     name: Go Build
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,7 +78,7 @@ jobs:
     strategy:
       matrix:
         service: [parser, crawler-python, osint-discovery]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -110,7 +110,7 @@ jobs:
     strategy:
       matrix:
         service: [parser, crawler-python, osint-discovery]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -135,7 +135,7 @@ jobs:
   yaml-lint:
     name: YAML Linting
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -155,7 +155,7 @@ jobs:
   markdown-lint:
     name: Markdown Linting
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
